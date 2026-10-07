@@ -10,20 +10,20 @@ final class EditorState: ObservableObject {
 }
 
 struct CanvasView: NSViewRepresentable {
-    let content: ImageDocument
+    let content: RasterSurface
     let state: EditorState
     func makeNSView(context: Context) -> CanvasNSView {
         let view = CanvasNSView(content: content, state: state)
         state.canvas = view
         return view
     }
-    func updateNSView(_ nsView: CanvasNSView, context: Context) {}
+    func updateNSView(_ nsView: CanvasNSView, context: Context) { nsView.update(content) }
 }
 
 /// Draws a retained composite. Checkerboard, zoom and pan exist only in this presentation layer.
 @MainActor
 final class CanvasNSView: NSView {
-    private let content: ImageDocument
+    private var content: RasterSurface
     private weak var state: EditorState?
     private var viewport = Viewport()
     private var dragging = false
@@ -31,7 +31,7 @@ final class CanvasNSView: NSView {
     override var isOpaque: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
-    init(content: ImageDocument, state: EditorState) {
+    init(content: RasterSurface, state: EditorState) {
         self.content = content
         self.state = state
         super.init(frame: .zero)
@@ -58,6 +58,12 @@ final class CanvasNSView: NSView {
     private func resizeViewport() {
         if viewport.isFitting { viewport.fit(image: content.size, viewport: bounds.size, backingScale: backingScale) }
         refresh()
+    }
+
+    func update(_ raster: RasterSurface) {
+        guard content.image !== raster.image else { return }
+        content = raster
+        needsDisplay = true
     }
 
     var zoomFactor: Double { viewport.zoom }
@@ -115,7 +121,7 @@ final class CanvasNSView: NSView {
             }
         }
         context.interpolationQuality = viewport.zoom >= 1 ? .none : .high
-        context.draw(content.composite, in: rect)
+        context.draw(content.image, in: rect)
         context.restoreGState()
     }
 

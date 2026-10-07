@@ -1,33 +1,73 @@
 # Architecture
 
-## Ownership and boundaries
+## Interval 1 audit and integration
 
-`PixelSize` is the sole dimension-validation boundary. `RasterSurface` owns a retained immutable Core Graphics bitmap snapshot, normalized to 8-bit premultiplied RGBA with explicit byte ordering and sRGB color space. A `CGImage` here is pixel storage and an interchange snapshot, not a view or `NSImage` representation. Copying the value retains storage rather than copying a full raster.
+Interval 2 starts at `dbbaf28`, the reviewed merge of Interval 1 (`93d0651`) into `main`. The original content model held one `RasterSurface`; its `composite` was that raster's `CGImage`. `ChromaDocument` owned lock-protected content, file identity, dirty state, safe PNG writes, and windows. Each editor window captured a fixed content value. `EditorState` and `CanvasNSView` held navigation only. ImageIO decoded ordinary files into normalized immutable pixels and exported that one raster.
 
-`ImageDocument` is the persistent content model. Its `composite` property is currently the single raster's image. The future evolution is `ImageDocument → layer stack → raster layer → pixel storage`, with a compositor producing the same immutable rendering snapshot. Layer identifiers, selections, transforms, blend modes, undo transactions, and history are intentionally deferred until their behavior is specified. Future model mutations should replace the composite and notify the window, rather than storing edits inside the canvas view. The current window snapshot is immutable because there are no content editing actions yet.
+The single-raster assumptions were isolated to `ImageDocument`, the codec output path, the fixed window/canvas snapshot, and PNG-only document saving. Those boundaries changed; the native document shell, immutable pixel storage, image import normalization, viewport math, checkerboard, and new-image form remain in use.
 
-`ChromaDocument` adapts this content to `NSDocument`. It owns file identity, native safe writing, unsaved state, and document windows. Its model storage is lock-protected because AppKit may open documents concurrently on worker threads. The lock's unchecked Sendable conformance is confined to this small storage box; only immutable `ImageDocument` values cross the boundary. `NSDocument` owns the rest of the lifecycle on the main actor. Newly created documents are dirty; imports are clean. File errors propagate to native error presentation.
+## Ownership and invariants
 
-`EditorState` and `CanvasNSView` own presentation state. Zoom, pan, inspector visibility, display scale, and checkerboard color cannot enter the file codec. SwiftUI body evaluation never decodes or constructs a full-resolution image. The canvas redraws the same retained snapshot. It visits only visible checkerboard cells, even when the scaled image is enormous.
+`PixelSize` validates dimensions. `RasterSurface` owns an immutable Core Graphics snapshot in 8-bit premultiplied RGBA, explicitly ordered in sRGB. Copying a surface retains storage; the public API never exposes mutable pixels. Normalization remains at image-import boundaries. The native codec can create a surface directly from validated canonical bytes without a color or alpha conversion.
 
-## Native shell
+`ImageDocument` owns a stable document UUID, authoritative canvas dimensions, and an ordered collection of `RasterLayer` values. The order is **bottom-to-top**. Every layer has a stable UUID, name, canvas-sized raster, visibility, and finite opacity in `0...1`. Properties can be extended later without introducing unused blend/transform/mask fields now.
 
-The app uses an AppKit entry point and document controller, with SwiftUI hosted inside ordinary resizable document windows. This keeps the responder chain, file dialogs, close/quit prompts, window titles, focus, and application menus native. `NewDocumentView` validates text before allocation and creates its raster off the main actor. Controls inherit system appearance and fonts. Image information occupies the right side; the center is the image workspace. A future left tool rail can join that workspace without changing pixel ownership.
+Layers cannot be empty, have duplicate IDs, or have different dimensions. There are at most 128 layers and 128 million total layer pixels. These limits bound a current stack, not undo history or all process allocations. Names are trimmed, must have 1–255 characters, and cannot contain control characters. Selection always references an existing layer.
 
-A Swift package provides a reproducible build and testing interface. The bundle script supplies `Info.plist`, native document type associations, and local ad-hoc signing. No generated Xcode project, user-specific settings, package dependencies, or release credentials are needed.
+The active-layer UUID is held alongside the content for invariant enforcement and undo selection restoration, but is **transient session state**: it is omitted from the format and changing it does not mark the document edited. Reopening selects the top layer. `NSDocument` owns file identity and dirty state. A UUID-based render revision is also transient.
 
-## File semantics
+## Mutation and undo
 
-ImageIO recognizes PNG, JPEG, TIFF, and HEIC by content, with support restricted to installed decoders. File size and encoded dimensions are checked before decoding; EXIF orientation is applied once at full resolution. Only the first/primary image is imported. Normalization intentionally trades original profile, high bit depth, metadata, animation, and additional pages for a predictable working pixel format. Decode failures leave the existing document untouched.
+Views receive `EditorPresentation` snapshots and invoke document commands. They never mutate the layer array or pixels. `ImageDocument.apply(LayerEdit)` validates an edit against a local value and commits only on success. No-ops return false. Errors preserve the complete previous state.
 
-Save PNG always presents a destination. `NSDocument` performs safe writing and clears dirty state only after success. The app disables autosaving in place so imports are not silently rewritten. JPEG export uses a detached task with an immutable snapshot, a fixed 92% quality, and an explicit white matte. Its native panel explains the alpha loss. Encoding finishes before an atomic replacement writes the file; failures leave the document's identity and dirty state unchanged. The checkerboard is never passed to either encoder.
+- Add inserts a transparent layer above the selected layer and selects it.
+- Duplicate inserts a new identity above its source, preserving raster/visibility/opacity. Immutable raster storage is safely shared; future pixel edits must replace it, not mutate a retained image.
+- Delete selects the layer below when deleting the active layer; deleting the bottom layer selects the next one. Deleting an unselected layer preserves selection. The last layer cannot be deleted.
+- Move takes a final, valid bottom-to-top index and preserves identity.
+- Rename leaves the render revision unchanged. Visibility, opacity, order, and structural edits invalidate rendering.
 
-There is no native project format yet. A successful JPEG export does not fulfill the pending PNG save for a new unsaved document. This is intentional: the export is lossy and its alpha has been discarded.
+`ChromaDocument.perform` prepares the new model and composite before replacing state. It registers the inverse through the native `UndoManager`, with human-readable action names. Undo/redo restore metadata values and references to immutable rasters; property edits never store full-resolution composite snapshots or copy all layer pixels. Structural edits retain the raster buffers needed to undo deletion, merge, and flatten. This deliberately small value-based history can later accept pixel replacements without coupling tools to the inspector.
 
-## Viewport and memory
+`NSDocument` observes its undo manager and handles dirty-state traversal. Tests exercise editing, undo back to a saved state, redo, failed edits, and no-ops. New documents start dirty; imported/native opened files start clean. Zoom, pan, inspector visibility, selection, and export are document-neutral.
 
-Zoom is physical display pixels per image pixel. At 100%, a 1000-pixel image spans 500 points on a 2× Retina display. Image origins align to display pixels, but dimensions are never rounded outward; doing so would stretch odd-sized rasters. Integer and high zoom use nearest-neighbor interpolation; reduced zoom uses high-quality display interpolation without altering pixels.
+The inspector retains only draft name/opacity values. Explicit selection and layer actions commit a pending valid name before the action; an undo-driven snapshot refresh only replaces draft text and cannot create a rename. Opacity drags apply on release, producing one document edit; keyboard/accessibility adjustments commit individual steps. The compositor is not run for each slider movement.
 
-Fit leaves 24 points of margin per side and tracks workspace resizing until the user pans or chooses a fixed zoom. Pinch zoom preserves the image position under the pointer. Panning is constrained so at least part of the image remains reachable. Dragging is a hand interaction throughout this interval; a future tool mode can make it temporary without changing viewport math.
+## Compositing and invalidation
 
-The 32-million-pixel cap bounds one working buffer to about 128 MB, not total process memory. Decoder, normalization, PNG/JPEG encoding, and matte creation may overlap buffers. Multiple documents compound that cost. PNG save remains synchronous; move its encoding to a snapshot-based asynchronous NSDocument write path if measured latency warrants it. There is no tiled cache, Metal pipeline, or speculative render scheduler.
+`LayerCompositor` is independent of AppKit and SwiftUI. It visits visible nonzero-opacity layers bottom-to-top using normal source-over in the existing **encoded sRGB** working space (not linear-light blending). All four premultiplied channels use:
+
+`out = round(source * opacity + destination * (1 - sourceAlpha / 255 * opacity))`
+
+Each layer rounds once to the nearest 8-bit value, with ties away from zero. Transparent output has zero RGB. An unchanged single visible layer at opacity 1 returns the original retained surface; importing a flat image does not allocate a second composite buffer. Pixel fixtures specify ordering, partial alpha, opacity, hidden layers, and rounding.
+
+`DocumentStorage` keeps the current immutable model and one composite under its existing narrow lock boundary for concurrent AppKit reads. On mutation, the compositor runs only if the render revision changed. Renaming and selection reuse the composite. Windows receive explicit snapshot updates, and the canvas swaps its retained image without resetting the viewport. SwiftUI body evaluation, zoom, pan, and inspector toggles cannot recomposite the image. Export computes from a captured immutable model off the main actor.
+
+Rendering and native package encoding are synchronous for now. The CPU compositor is deliberately simple, not tiled or incremental. Large stacks can stall editing and saving; no performance benchmark is claimed.
+
+## Merge and flatten precision
+
+Flatten Image replaces all layers with their composite, visible at opacity 1, preserves the active UUID, and retains final alpha. Hidden content is discarded but recoverable through undo.
+
+Merge Down currently supports **only the bottom two layers**. It uses their composite as the bottom layer's new raster, preserves that layer's ID/name, sets it visible at opacity 1, and selects it if the removed upper layer was active. Both layers' current visibility/opacity are baked in; hidden source pixels are recoverable through undo.
+
+This restriction is intentional: with an 8-bit source-over accumulator, quantizing a middle sub-stack before compositing it over lower layers can change rounding and therefore pixels. The bottom pair has the same transparent backdrop before and after merging, so the remaining stack renders byte-identically. Arbitrary middle merges are deferred until a precision policy is chosen; the menu disables them and inspector help explains the restriction.
+
+## Native shell and inspector
+
+An AppKit entry point/document controller hosts SwiftUI inside native document windows. The inspector shows the topmost layer first in a native selectable list, eye toggles, names, and opacity values. It provides add, duplicate, delete, rename, opacity, merge/flatten, and bounded Move Up/Down controls. Explicit reorder controls support keyboards/accessibility without introducing drag/drop identity and insertion-index ambiguity in this interval. No drag/drop behavior is claimed.
+
+The Layer menu mirrors structural actions and validates availability. Native Edit menu commands retain Cmd-Z/Cmd-Shift-Z and responder-chain text editing. Disabled states, selected rows, visibility values, opacity, and control labels are exposed through native accessibility. Live accessibility-tree inspection is distinct from VoiceOver verification.
+
+## Files and lifecycle
+
+Ordinary PNG/JPEG/TIFF/HEIC import still uses ImageIO's first/primary image, applies EXIF orientation, and normalizes once. The initial layer is named from the source filename when valid, with `Background` as fallback. Blank transparent/white documents create a single `Background` layer with the existing pixel behavior.
+
+Save/Save As write editable `.chroma` packages using `NSDocument` safe writing. An imported image must choose a native destination; it is never implicitly overwritten with flattened pixels. Saving an existing native project uses its destination. Autosaving in place remains disabled. Read failure does not replace existing content. Native package validation and serialization live in `ChromaCore`; details are in [native format](native-format.md).
+
+PNG/JPEG are exports, independent of native Save. Both receive the visible composite and never UI state. PNG retains alpha; JPEG retains Interval 1's explicit white matte and 92% quality. Export uses a detached task and atomic file replacement after encoding. It does not change document identity, layers, history, or dirty state. A flattened export does not satisfy the pending native save of an edited project.
+
+## Existing viewport and import limits
+
+Zoom is physical display pixels per image pixel. At 100%, a 1000-pixel image spans 500 points on a 2× display. Image origins align to display pixels without stretching odd-sized rasters. Integer/high zoom uses nearest-neighbor interpolation; reduced zoom uses high-quality display interpolation. Fit tracks resizing until explicit navigation, with 24-point margins; pan stays reachable. The checkerboard visits only visible cells and never enters export.
+
+Individual rasters remain limited to 16,384 pixels per side and 32 million pixels, with 256 MB per imported encoded image. Metadata, original profiles/high bit depth, additional pages/frames, and auxiliary images are not preserved. Multiple documents, normalization/encoding intermediates, composites, native byte buffers, and retained undo rasters can exceed the current-layer memory bound. Signing remains local ad-hoc; there is no release signing or notarization.

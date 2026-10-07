@@ -46,7 +46,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item("Open…", #selector(NSDocumentController.openDocument(_:)), key: "o", in: file)
         file.addItem(.separator())
         item("Close", #selector(NSWindow.performClose(_:)), key: "w", in: file)
-        item("Save PNG…", #selector(NSDocument.save(_:)), key: "s", in: file)
+        item("Save…", #selector(NSDocument.save(_:)), key: "s", in: file)
+        item("Save As…", #selector(NSDocument.saveAs(_:)), key: "s", modifiers: [.command, .shift], in: file)
+        item("Export PNG…", #selector(EditorWindowController.exportPNG(_:)), in: file)
         item(
             "Export JPEG…", #selector(EditorWindowController.exportJPEG(_:)), key: "e", modifiers: [.command, .shift],
             in: file)
@@ -60,6 +62,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item("Paste", #selector(NSText.paste(_:)), key: "v", in: edit)
         item("Select All", #selector(NSText.selectAll(_:)), key: "a", in: edit)
 
+        let layer = submenu("Layer", in: main)
+        item("Add Layer", #selector(EditorWindowController.addLayer(_:)), in: layer)
+        item("Duplicate Layer", #selector(EditorWindowController.duplicateLayer(_:)), in: layer)
+        item("Delete Layer", #selector(EditorWindowController.deleteLayer(_:)), in: layer)
+        layer.addItem(.separator())
+        item("Move Up", #selector(EditorWindowController.moveLayerUp(_:)), in: layer)
+        item("Move Down", #selector(EditorWindowController.moveLayerDown(_:)), in: layer)
+        layer.addItem(.separator())
+        item("Merge Down", #selector(EditorWindowController.mergeDown(_:)), in: layer)
+        item("Flatten Image", #selector(EditorWindowController.flattenImage(_:)), in: layer)
+
         let view = submenu("View", in: main)
         item("Zoom In", #selector(EditorWindowController.zoomIn(_:)), key: "=", in: view)
         item("Zoom Out", #selector(EditorWindowController.zoomOut(_:)), key: "-", in: view)
@@ -69,7 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             in: view)
         view.addItem(.separator())
         item(
-            "Toggle Image Info", #selector(EditorWindowController.toggleInspector(_:)), key: "i",
+            "Toggle Inspector", #selector(EditorWindowController.toggleInspector(_:)), key: "i",
             modifiers: [.command, .option], in: view)
         let window = submenu("Window", in: main)
         item("Minimize", #selector(NSWindow.performMiniaturize(_:)), key: "m", in: window)
