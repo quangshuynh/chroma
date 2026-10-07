@@ -1,0 +1,140 @@
+import AppKit
+import ChromaCore
+import SwiftUI
+
+@MainActor
+final class EditorWindowController: NSWindowController, NSMenuItemValidation {
+    let state = EditorState()
+    private let content: ImageDocument
+    private var isExporting = false
+
+    init(content: ImageDocument) {
+        self.content = content
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window.minSize = NSSize(width: 640, height: 460)
+        window.isReleasedWhenClosed = false
+        window.title = "Untitled"
+        window.tabbingMode = .preferred
+        super.init(window: window)
+        window.contentView = NSHostingView(rootView: EditorView(content: content, state: state))
+        window.center()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    @objc func zoomIn(_ sender: Any?) { state.canvas?.zoomBy(1.25) }
+    @objc func zoomOut(_ sender: Any?) { state.canvas?.zoomBy(1 / 1.25) }
+    @objc func actualSize(_ sender: Any?) { state.canvas?.zoom(to: 1) }
+    @objc func fitImage(_ sender: Any?) { state.canvas?.fit() }
+    @objc func toggleInspector(_ sender: Any?) { state.inspectorVisible.toggle() }
+
+    @objc func exportJPEG(_ sender: Any?) {
+        guard let window, !isExporting else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.jpeg]
+        panel.title = "Export JPEG"
+        panel.message =
+            "Transparent pixels will be flattened onto white. JPEG uses lossy compression. Your open document stays unchanged."
+        panel.nameFieldStringValue =
+            (((document as? NSDocument)?.displayName ?? "Untitled") as NSString).deletingPathExtension + ".jpg"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url, let self else { return }
+            self.isExporting = true
+            let snapshot = self.content
+            Task {
+                do {
+                    try await Task.detached(priority: .userInitiated) {
+                        try ImageCodec.export(snapshot, to: url, format: .jpeg)
+                    }.value
+                } catch { self.presentError(error) }
+                self.isExporting = false
+            }
+        }
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(exportJPEG(_:)): return !isExporting
+        case #selector(zoomIn(_:)): return state.zoom < Viewport.zoomRange.upperBound
+        case #selector(zoomOut(_:)): return state.zoom > Viewport.zoomRange.lowerBound
+        case #selector(toggleInspector(_:)):
+            menuItem.state = state.inspectorVisible ? .on : .off
+            return true
+        default: return true
+        }
+    }
+}
+
+private struct EditorView: View {
+    let content: ImageDocument
+    @ObservedObject var state: EditorState
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Label("Canvas", systemImage: "hand.draw").foregroundStyle(.secondary)
+                Spacer()
+                HStack(spacing: 8) {
+                    Button {
+                        state.canvas?.zoomBy(1 / 1.25)
+                    } label: {
+                        Image(systemName: "minus.magnifyingglass")
+                    }.help("Zoom Out (⌘−)").accessibilityLabel("Zoom out")
+                        .disabled(state.zoom <= Viewport.zoomRange.lowerBound)
+                    Text(state.zoom, format: .percent.precision(.fractionLength(0...1)))
+                        .monospacedDigit().frame(minWidth: 62).accessibilityLabel("Zoom")
+                        .accessibilityValue(state.zoom.formatted(.percent))
+                    Button {
+                        state.canvas?.zoomBy(1.25)
+                    } label: {
+                        Image(systemName: "plus.magnifyingglass")
+                    }.help("Zoom In (⌘+)").accessibilityLabel("Zoom in")
+                        .disabled(state.zoom >= Viewport.zoomRange.upperBound)
+                }
+                Button("100%") { state.canvas?.zoom(to: 1) }.help("Actual Size (⌘0): one image pixel per display pixel")
+                Button("Fit") { state.canvas?.fit() }.help("Fit Image (⇧⌘0)")
+                Divider().frame(height: 18)
+                Button {
+                    state.inspectorVisible.toggle()
+                } label: {
+                    Image(systemName: "sidebar.right")
+                }.help("Toggle Image Info (⌥⌘I)").accessibilityLabel("Toggle image info")
+            }
+            .buttonStyle(.borderless).padding(.horizontal, 16).frame(height: 42)
+            Divider()
+            HStack(spacing: 0) {
+                CanvasView(content: content, state: state)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if state.inspectorVisible {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 18) {
+                        Text("Image").font(.headline)
+                        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 10) {
+                            infoRow("Width", "\(content.size.width) px")
+                            infoRow("Height", "\(content.size.height) px")
+                            infoRow("Color", "sRGB")
+                            infoRow("Depth", "8-bit RGBA")
+                        }
+                        Spacer()
+                    }.padding(18).frame(width: 204)
+                        .background(.background)
+                }
+            }
+            Divider()
+            HStack {
+                Text("\(content.size.width) × \(content.size.height) px").monospacedDigit()
+                Spacer()
+                Text("Scroll or drag to pan · Pinch to zoom")
+            }.font(.system(size: 11)).foregroundStyle(.secondary)
+                .padding(.horizontal, 14).frame(height: 28)
+        }
+    }
+
+    private func infoRow(_ label: String, _ value: String) -> some View {
+        GridRow {
+            Text(label).foregroundStyle(.secondary)
+            Text(value).monospacedDigit()
+        }
+    }
+}
