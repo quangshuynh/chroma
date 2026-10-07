@@ -23,7 +23,10 @@ public enum ImageCodec {
         guard let bytes = values.fileSize, bytes <= maximumFileBytes else { throw ImageError.imageTooLarge }
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary)
         else { throw ImageError.unreadableImage }
-        return try decode(source: source)
+        var document = try decode(source: source)
+        let sourceName = String(url.deletingPathExtension().lastPathComponent.prefix(255))
+        if !sourceName.isEmpty { _ = try? document.apply(.rename(document.activeLayerID, sourceName)) }
+        return document
     }
 
     public static func decode(data: Data) throws -> ImageDocument {
@@ -60,7 +63,8 @@ public enum ImageCodec {
     }
 
     public static func encode(_ document: ImageDocument, format: ExportFormat) throws -> Data {
-        let image = try format == .jpeg ? document.raster.flattenedOnWhite() : document.composite
+        let raster = try LayerCompositor.composite(document)
+        let image = try format == .jpeg ? raster.flattenedOnWhite() : raster.image
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(data, format.type.identifier as CFString, 1, nil)
         else { throw ImageError.encodingFailed }

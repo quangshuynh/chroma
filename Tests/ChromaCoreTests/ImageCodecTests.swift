@@ -19,9 +19,9 @@ struct ImageCodecTests {
         let original = try sampleDocument()
         let decoded = try ImageCodec.decode(data: ImageCodec.encode(original, format: .png))
         #expect(decoded.size == original.size)
-        #expect(pixels(decoded.composite) == pixels(original.composite))
-        #expect(pixels(decoded.composite)[7] == 128)
-        #expect(pixels(decoded.composite)[11] == 0)
+        #expect(pixels(decoded.layers[0].raster.image) == pixels(original.layers[0].raster.image))
+        #expect(pixels(decoded.layers[0].raster.image)[7] == 128)
+        #expect(pixels(decoded.layers[0].raster.image)[11] == 0)
     }
 
     @Test func jpegFlattensTransparentPixelsToWhite() throws {
@@ -29,13 +29,13 @@ struct ImageCodecTests {
             raster: try RasterSurface(size: PixelSize(width: 32, height: 24), background: .transparent))
         let decoded = try ImageCodec.decode(data: ImageCodec.encode(original, format: .jpeg))
         #expect(decoded.size == original.size)
-        #expect(pixels(decoded.composite).allSatisfy { $0 >= 254 })
-        #expect(pixels(original.composite).allSatisfy { $0 == 0 })
+        #expect(pixels(decoded.layers[0].raster.image).allSatisfy { $0 >= 254 })
+        #expect(pixels(original.layers[0].raster.image).allSatisfy { $0 == 0 })
     }
 
     @Test func partialAlphaUsesWhiteMatte() throws {
         let original = try sampleDocument()
-        let flattened = try RasterSurface(normalizing: original.raster.flattenedOnWhite())
+        let flattened = try RasterSurface(normalizing: original.layers[0].raster.flattenedOnWhite())
         #expect(Array(pixels(flattened.image)[4..<8]) == [127, 255, 127, 255])
     }
 
@@ -43,28 +43,28 @@ struct ImageCodecTests {
     func additionalInputsDecodeAtOriginalDimensions(type: UTType) throws {
         let original = ImageDocument(
             raster: try RasterSurface(size: PixelSize(width: 48, height: 32), background: .white))
-        let encoded = try fixture(image: original.composite, type: type)
+        let encoded = try fixture(image: original.layers[0].raster.image, type: type)
         let decoded = try ImageCodec.decode(data: encoded)
         #expect(decoded.size == original.size)
-        #expect(pixels(decoded.composite).allSatisfy { $0 >= 250 })
+        #expect(pixels(decoded.layers[0].raster.image).allSatisfy { $0 >= 250 })
     }
 
     @Test func tiffPreservesAlpha() throws {
         let original = try sampleDocument()
-        let decoded = try ImageCodec.decode(data: fixture(image: original.composite, type: .tiff))
-        #expect(pixels(decoded.composite) == pixels(original.composite))
+        let decoded = try ImageCodec.decode(data: fixture(image: original.layers[0].raster.image, type: .tiff))
+        #expect(pixels(decoded.layers[0].raster.image) == pixels(original.layers[0].raster.image))
     }
 
     @Test(arguments: [2, 3, 4, 5, 6, 7, 8])
     func appliesEXIFOrientation(orientation: Int) throws {
         let original = try sampleDocument()
         let data = try fixture(
-            image: original.composite, type: .tiff, properties: [kCGImagePropertyOrientation: orientation])
+            image: original.layers[0].raster.image, type: .tiff, properties: [kCGImagePropertyOrientation: orientation])
         let decoded = try ImageCodec.decode(data: data)
         let swapsAxes = orientation >= 5
         #expect(decoded.size.width == (swapsAxes ? 2 : 4))
         #expect(decoded.size.height == (swapsAxes ? 4 : 2))
-        let originalPixels = pixels(original.composite)
+        let originalPixels = pixels(original.layers[0].raster.image)
         let maps = [
             2: [3, 2, 1, 0, 7, 6, 5, 4], 3: [7, 6, 5, 4, 3, 2, 1, 0],
             4: [4, 5, 6, 7, 0, 1, 2, 3], 5: [0, 4, 1, 5, 2, 6, 3, 7],
@@ -72,7 +72,7 @@ struct ImageCodecTests {
             8: [3, 7, 2, 6, 1, 5, 0, 4],
         ]
         let expected = maps[orientation]!.flatMap { Array(originalPixels[($0 * 4)..<($0 * 4 + 4)]) }
-        #expect(pixels(decoded.composite) == expected)
+        #expect(pixels(decoded.layers[0].raster.image) == expected)
     }
 
     @Test func rejectsInvalidData() {
@@ -80,7 +80,7 @@ struct ImageCodecTests {
     }
 
     @Test func rejectsUnsupportedGIF() throws {
-        let data = try fixture(image: sampleDocument().composite, type: .gif)
+        let data = try fixture(image: sampleDocument().layers[0].raster.image, type: .gif)
         #expect(throws: ImageError.unsupportedFormat) { try ImageCodec.decode(data: data) }
     }
 
@@ -122,7 +122,7 @@ struct ImageCodecTests {
         try ImageCodec.export(original, to: url, format: .png)
         let sourceBytes = try Data(contentsOf: url)
         let decoded = try ImageCodec.decode(url: url)
-        #expect(pixels(decoded.composite) == pixels(original.composite))
+        #expect(pixels(decoded.layers[0].raster.image) == pixels(original.layers[0].raster.image))
         #expect(throws: (any Error).self) {
             try ImageCodec.export(original, to: directory.appendingPathComponent("missing/file.jpg"), format: .jpeg)
         }

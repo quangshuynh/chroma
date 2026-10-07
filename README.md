@@ -1,6 +1,6 @@
 # Chroma
 
-Chroma is an early-development native macOS raster image editor, inspired by the approachable workflow of paint.net. It is built with Swift, SwiftUI, AppKit, Core Graphics, and ImageIO. The current version establishes the document and canvas foundation; it does not yet edit image pixels.
+Chroma is an early-development native macOS raster image editor, inspired by the approachable workflow of paint.net. It is built with Swift, SwiftUI, AppKit, Core Graphics, and ImageIO. Interval 2 adds editable raster layers, compositing, native documents, and undo. Painting individual pixels is future work.
 
 ## What works
 
@@ -10,10 +10,14 @@ Chroma is an early-development native macOS raster image editor, inspired by the
 - Zoom from 1% to 3200%, fit the image, or show actual size. At 100%, one image pixel occupies one physical display pixel, including on Retina displays.
 - Pan by scrolling, dragging the canvas, or using arrow keys while the canvas has focus. Shift-arrow moves farther; trackpad pinch zooms around the pointer.
 - Inspect dimensions, working color space, and depth. The native window title shows the filename and unsaved-change indicator.
-- Save a lossless PNG with alpha or export a JPEG with transparency explicitly flattened onto white.
+- Add, duplicate, rename, delete, reorder, show/hide, and adjust the opacity of raster layers in the native Layers inspector.
+- Undo/redo document edits, merge the bottom two layers, or flatten the stack while preserving transparency.
+- Save editable `.chroma` packages; export a composited PNG with alpha or JPEG with an explicit white matte.
 - Use multiple document windows, native close/quit prompts, and the system light or dark appearance.
 
-**Save PNG always asks for a destination**, even for an already-open PNG. Replacing an existing file requires the native confirmation. A successful PNG save makes that file the document's destination and clears its unsaved state. JPEG export is a copy: it does not change the open document or its unsaved state. New images are unsaved until saved as PNG; imported images start clean. Navigation does not modify images.
+**Save preserves layers in a native `.chroma` document.** Imported images start clean and must choose a Chroma destination when saved. Existing native documents save to their current destination; Save As creates a copy. PNG/JPEG export leaves the document, its destination, and its unsaved state unchanged. New images start unsaved. Navigation and active-layer selection never mark content modified.
+
+The inspector lists the topmost layer first. Move Up/Down controls provide explicit, accessible reordering. The final layer cannot be deleted. Rename with Return or by leaving the name field; opacity drags apply on release as one undo step. Merge Down is currently available only for the bottom two layers, where the 8-bit compositor can preserve exact pixels. Flatten Image handles the complete stack and retains alpha. Both operations are undoable.
 
 ## Build and run
 
@@ -47,37 +51,40 @@ Use `swift package clean` before validation for a clean build. CI runs validatio
 | --- | --- |
 | New image | ⌘N |
 | Open image | ⌘O |
-| Save PNG | ⌘S |
+| Save Chroma document | ⌘S |
+| Save As | ⇧⌘S |
+| Undo / Redo | ⌘Z / ⇧⌘Z |
 | Export JPEG | ⇧⌘E |
 | Zoom in / out | ⌘= / ⌘− |
 | Actual size | ⌘0 |
 | Fit image | ⇧⌘0 |
-| Toggle image information | ⌥⌘I |
+| Toggle inspector | ⌥⌘I |
 | Close window | ⌘W |
 
 ## Formats and limits
 
 | Format | Open | Output |
 | --- | --- | --- |
+| Chroma (`.chroma`) | Editable layers | Editable layers, exact working pixels |
 | PNG | Yes, alpha preserved | Lossless, alpha preserved |
 | JPEG | Yes, orientation applied | 92% quality, white transparency matte |
 | TIFF | First image/page only, alpha preserved | No |
 | HEIC | Primary image through the installed Apple decoder | No |
 
-Input types are restricted to these formats and checked against the installed ImageIO decoders. Images are decoded once, with orientation applied, and normalized to **8-bit premultiplied RGBA in sRGB**. This is not an archival metadata or high-bit-depth workflow: original metadata, HDR range, additional pages/frames, auxiliary depth images, and original color profiles are not retained in output. Source files are never changed just by opening them.
+Ordinary image inputs are checked against the installed ImageIO decoders. Images are decoded once, with orientation applied, and normalized to **8-bit premultiplied RGBA in sRGB**. This is not an archival metadata or high-bit-depth workflow: original metadata, HDR range, additional pages/frames, auxiliary depth images, and original color profiles are not retained in output. Source files are never changed just by opening them.
 
-Limits are 16,384 pixels per side, 32 million pixels total, and 256 MB per input file. Dimensions and file size are checked before pixel decoding. A maximum-sized working raster is approximately 128 MB; decoding and encoding can temporarily require several buffers, and multiple windows increase memory use. PNG encoding currently runs within the native synchronous save operation. Background creation, opening, and JPEG encoding avoid blocking the UI during their expensive work.
+Per-raster limits are 16,384 pixels per side, 32 million pixels total, and 256 MB per input file. Dimensions and file size are checked before pixel decoding. A document has at most 128 layers and 128 million aggregate layer pixels. A maximum-sized single raster is approximately 128 MB; decoder/encoder intermediates, composite buffers, undo history, and multiple windows increase memory use. Compositing and native package saves are synchronous. Background creation, opening, and PNG/JPEG export run expensive work away from the UI. Native version 1 uses uncompressed RGBA layer files to avoid low-alpha rounding on save; see the [format specification](docs/native-format.md).
 
 ## Architecture
 
-- **ChromaCore** contains validated dimensions, immutable raster storage, the persistent `ImageDocument` model, ImageIO codecs, and pure viewport math. It has no SwiftUI or AppKit dependency.
-- **ChromaApp** uses `NSDocument` for files, safe PNG writes, dirty state, and window lifecycle. SwiftUI provides forms, editor controls, and the small image inspector. An AppKit view renders the retained Core Graphics composite and handles navigation.
-- **Tests** cover validation, orientation, pixel and alpha round trips, file failures, viewport calculations, and native document lifecycle behavior.
+- **ChromaCore** contains validated dimensions, immutable raster storage, the document/layer model, mutation APIs, deterministic normal-alpha compositor, native package codec, image codecs, and viewport math.
+- **ChromaApp** adapts content to `NSDocument`, native undo, safe saving, dirty state, and windows. SwiftUI provides forms and the Layers inspector; an AppKit canvas draws the cached composite and handles navigation.
+- **Tests** cover layer invariants, exact compositing, native round trips and malformed packages, all ordinary image formats, export, viewport neutrality, native undo/redo, and saved-state traversal.
 
-The persistent model owns pixels, while each editor window owns its viewport. `ImageDocument.composite` is the rendering boundary for a future layer compositor. There are deliberately no speculative layer, tool, or history implementations. See [architecture decisions](docs/architecture.md).
+Content owns pixels, the document boundary controls mutations and render invalidation, and each editor owns transient presentation state. Undo retains immutable raster references instead of copying image buffers for property edits. See [architecture decisions](docs/architecture.md).
 
 ## Not implemented yet
 
-Layers, painting, selections, undoable pixel operations, History, text, shapes, effects, adjustments, a native layered project format, PSD, RAW development, plugins, AI, cloud accounts, and collaboration are outside this version. The left side remains available for a future tool rail; no inactive tools or placeholder inspectors are shown.
+Painting, selections, pixel-editing tools, blend modes, masks, transforms, full History, text, shapes, effects, adjustments, PSD, RAW development, plugins, AI, cloud accounts, and collaboration are outside this version. The left side remains available for a future tool rail; no inactive tools or placeholder inspectors are shown.
 
 Licensed under the [MIT License](LICENSE).

@@ -81,6 +81,40 @@ public struct RasterSurface: Sendable {
         return result
     }
 
+    /// Exact canonical bytes, without row padding. Used by the compositor and native codec.
+    public var rgbaBytes: Data {
+        let data = image.dataProvider!.data! as Data
+        if image.bytesPerRow == size.width * 4 { return data.prefix(size.width * size.height * 4) }
+        var result = Data(capacity: size.width * size.height * 4)
+        for y in 0..<size.height {
+            result.append(data[(y * image.bytesPerRow)..<(y * image.bytesPerRow + size.width * 4)])
+        }
+        return result
+    }
+
+    public init(size: PixelSize, premultipliedRGBA bytes: Data) throws {
+        guard bytes.count == size.width * size.height * 4 else { throw LayerError.invalidRaster }
+        let valid = bytes.withUnsafeBytes { raw in
+            let pixels = raw.bindMemory(to: UInt8.self)
+            for offset in stride(from: 0, to: pixels.count, by: 4) {
+                let alpha = pixels[offset + 3]
+                if pixels[offset] > alpha || pixels[offset + 1] > alpha || pixels[offset + 2] > alpha { return false }
+            }
+            return true
+        }
+        guard valid, let provider = CGDataProvider(data: bytes as CFData),
+            let image = CGImage(
+                width: size.width, height: size.height, bitsPerComponent: 8,
+                bitsPerPixel: 32, bytesPerRow: size.width * 4,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGBitmapInfo(
+                    rawValue: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),
+                provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+        else { throw LayerError.invalidRaster }
+        self.size = size
+        self.image = image
+    }
+
     private static func makeContext(size: PixelSize) throws -> CGContext {
         guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
             let context = CGContext(
@@ -90,13 +124,4 @@ public struct RasterSurface: Sendable {
         else { throw ImageError.allocationFailed }
         return context
     }
-}
-
-/// Persistent content boundary. A future layer stack and compositor can replace `raster`
-/// without putting viewport state, file dialogs, or view objects in the model.
-public struct ImageDocument: Sendable {
-    public let raster: RasterSurface
-    public var size: PixelSize { raster.size }
-    public init(raster: RasterSurface) { self.raster = raster }
-    public var composite: CGImage { raster.image }
 }
