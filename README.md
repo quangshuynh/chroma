@@ -1,6 +1,6 @@
 # Chroma
 
-Chroma is an early-development native macOS raster image editor, inspired by the approachable workflow of paint.net. It is built with Swift, SwiftUI, AppKit, Core Graphics, and ImageIO. Interval 2 adds editable raster layers, compositing, native documents, and undo. Painting individual pixels is future work.
+Chroma is an early-development native macOS raster image editor, inspired by the approachable workflow of paint.net. It is built with Swift, SwiftUI, AppKit, Core Graphics, and ImageIO. It supports layered documents, pixel painting, compositing, native saves, and stroke-level undo.
 
 ## What works
 
@@ -8,14 +8,17 @@ Chroma is an early-development native macOS raster image editor, inspired by the
 - Open PNG, JPEG, TIFF, and HEIC images with native file dialogs or Finder.
 - View transparency over a checkerboard that is never included in saved pixels.
 - Zoom from 1% to 3200%, fit the image, or show actual size. At 100%, one image pixel occupies one physical display pixel, including on Retina displays.
-- Pan by scrolling, dragging the canvas, or using arrow keys while the canvas has focus. Shift-arrow moves farther; trackpad pinch zooms around the pointer.
+- Pan by scrolling, Option-dragging the canvas, or using arrow keys while the canvas has focus. Shift-arrow moves farther; trackpad pinch zooms around the pointer.
 - Inspect dimensions, working color space, and depth. The native window title shows the filename and unsaved-change indicator.
+- Paint the selected visible layer with Pencil or Brush, erase to transparency, and sample the visible composite with Eyedropper.
+- Choose foreground/background colors with native color wells, swap them, and set a 1–512 px diameter. Pencil uses hard square marks; Brush and Eraser use round edges.
+- Undo or redo a whole stroke in one step. Escape cancels an unfinished stroke without changing document pixels.
 - Add, duplicate, rename, delete, reorder, show/hide, and adjust the opacity of raster layers in the native Layers inspector.
 - Undo/redo document edits, merge the bottom two layers, or flatten the stack while preserving transparency.
 - Save editable `.chroma` packages; export a composited PNG with alpha or JPEG with an explicit white matte.
 - Use multiple document windows, native close/quit prompts, and the system light or dark appearance.
 
-**Save preserves layers in a native `.chroma` document.** Imported images start clean and must choose a Chroma destination when saved. Existing native documents save to their current destination; Save As creates a copy. PNG/JPEG export leaves the document, its destination, and its unsaved state unchanged. New images start unsaved. Navigation and active-layer selection never mark content modified.
+**Save preserves layers in a native `.chroma` document.** Imported images start clean and must choose a Chroma destination when saved. Existing native documents save to their current destination; Save As creates a copy. PNG/JPEG export leaves the document, its destination, and its unsaved state unchanged. New images start unsaved. Navigation, active-layer selection, hovering, tool/size/color changes, and Eyedropper sampling never mark content modified. Hidden and zero-opacity layers must be made visible before painting.
 
 The inspector lists the topmost layer first. Move Up/Down controls provide explicit, accessible reordering. The final layer cannot be deleted. Rename with Return or by leaving the name field; opacity drags apply on release as one undo step. Merge Down is currently available only for the bottom two layers, where the 8-bit compositor can preserve exact pixels. Flatten Image handles the complete stack and retains alpha. Both operations are undoable.
 
@@ -73,18 +76,20 @@ Use `swift package clean` before validation for a clean build. CI runs validatio
 
 Ordinary image inputs are checked against the installed ImageIO decoders. Images are decoded once, with orientation applied, and normalized to **8-bit premultiplied RGBA in sRGB**. This is not an archival metadata or high-bit-depth workflow: original metadata, HDR range, additional pages/frames, auxiliary depth images, and original color profiles are not retained in output. Source files are never changed just by opening them.
 
-Per-raster limits are 16,384 pixels per side, 32 million pixels total, and 256 MB per input file. Dimensions and file size are checked before pixel decoding. A document has at most 128 layers and 128 million aggregate layer pixels. A maximum-sized single raster is approximately 128 MB; decoder/encoder intermediates, composite buffers, undo history, and multiple windows increase memory use. Compositing and native package saves are synchronous. Background creation, opening, and PNG/JPEG export run expensive work away from the UI. Native version 1 uses uncompressed RGBA layer files to avoid low-alpha rounding on save; see the [format specification](docs/native-format.md).
+Per-raster limits are 16,384 pixels per side, 32 million pixels total, and 256 MB per input file. Dimensions and file size are checked before pixel decoding. A document has at most 128 layers and 128 million aggregate layer pixels. A maximum-sized single raster is approximately 128 MB; decoder/encoder intermediates, composite buffers, undo history, and multiple windows increase memory use. Layer-operation compositing, undo/redo compositing, and native package saves are synchronous. Painting uses affected-region previews and assembles the final composite at stroke end. Background creation, opening, and PNG/JPEG export run expensive work away from the UI. Native version 1 uses uncompressed RGBA layer files to avoid low-alpha rounding on save; see the [format specification](docs/native-format.md).
 
 ## Architecture
 
-- **ChromaCore** contains validated dimensions, immutable raster storage, the document/layer model, mutation APIs, deterministic normal-alpha compositor, native package codec, image codecs, and viewport math.
+- **ChromaCore** contains validated dimensions, immutable raster storage, the document/layer model, mutation APIs, deterministic normal-alpha compositor, native package codec, image codecs, viewport math, and the pixel stroke engine.
 - **ChromaApp** adapts content to `NSDocument`, native undo, safe saving, dirty state, and windows. SwiftUI provides forms and the Layers inspector; an AppKit canvas draws the cached composite and handles navigation.
-- **Tests** cover layer invariants, exact compositing, native round trips and malformed packages, all ordinary image formats, export, viewport neutrality, native undo/redo, and saved-state traversal.
+- **Tests** cover layer invariants, exact compositing, native round trips and malformed packages, all ordinary image formats, export, viewport neutrality, native undo/redo, painting/alpha/interpolation, cancellation, and saved-state traversal.
+
+See [painting behavior and measured performance](docs/painting.md) for tool semantics, memory costs, and the repeatable benchmark.
 
 Content owns pixels, the document boundary controls mutations and render invalidation, and each editor owns transient presentation state. Undo retains immutable raster references instead of copying image buffers for property edits. See [architecture decisions](docs/architecture.md).
 
 ## Not implemented yet
 
-Painting, selections, pixel-editing tools, blend modes, masks, transforms, full History, text, shapes, effects, adjustments, PSD, RAW development, plugins, AI, cloud accounts, and collaboration are outside this version. The left side remains available for a future tool rail; no inactive tools or placeholder inspectors are shown.
+Selections, fill, gradients, blend modes, masks, transforms, full History, text, shapes, effects, adjustments, PSD, RAW development, plugins, AI, cloud accounts, and collaboration are outside this version. The compact tool strip exposes only implemented tools.
 
 Licensed under the [MIT License](LICENSE).

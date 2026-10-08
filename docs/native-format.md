@@ -48,4 +48,4 @@ The root must contain exactly `document.json` and the `layers` directory. That d
 
 Persisted: schema/pixel format, document ID, canvas size, layer order, IDs, names, visibility, opacity, exact pixels/alpha.
 
-Omitted: active layer, zoom, pan, window state, inspector visibility, drafts, render revision, composite cache, and undo/redo history. Reopening selects the top layer and starts a new undo history. Export is never a native-document mutation.
+Omitted: active layer, tool, brush size, foreground/background colors, unfinished stroke previews, zoom, pan, window state, inspector visibility, drafts, render revision, composite cache, and undo/redo history. Reopening selects the top layer and starts a new undo history. Export is never a native-document mutation.
