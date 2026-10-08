@@ -7,10 +7,12 @@ let package = Package(
     products: [
         .library(name: "ChromaCore", targets: ["ChromaCore"]),
         .executable(name: "Chroma", targets: ["ChromaApp"]),
+        .executable(name: "ChromaBench", targets: ["ChromaBench"]),
     ],
     targets: [
         .target(name: "ChromaCore"),
         .executableTarget(name: "ChromaApp", dependencies: ["ChromaCore"]),
+        .executableTarget(name: "ChromaBench", dependencies: ["ChromaCore"]),
         .testTarget(name: "ChromaCoreTests", dependencies: ["ChromaCore"]),
         .testTarget(name: "ChromaAppTests", dependencies: ["ChromaApp", "ChromaCore"]),
     ]

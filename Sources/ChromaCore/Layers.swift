@@ -198,6 +198,17 @@ public struct ImageDocument: Sendable {
         return true
     }
 
+    /// Reusable immutable pixel replacement boundary. Metadata and layer identity are preserved.
+    public mutating func replaceRaster(_ raster: RasterSurface, for id: UUID) throws {
+        let index = try index(of: id)
+        guard raster.size == size else { throw LayerError.invalidRaster }
+        let layer = layers[index]
+        layers[index] = try RasterLayer(
+            id: id, name: layer.name, raster: raster,
+            isVisible: layer.isVisible, opacity: layer.opacity)
+        renderRevision = UUID()
+    }
+
     private func index(of id: UUID) throws -> Int {
         guard let index = layers.firstIndex(where: { $0.id == id }) else { throw LayerError.invalidLayer }
         return index

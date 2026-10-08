@@ -1,53 +1,55 @@
-# Verification — Interval 2
+# Verification
 
-Verified October 7, 2026, on macOS 26.6.2 (25G83), Apple Silicon, Xcode 27.0 (27A266a), and Swift 6.4, targeting macOS 14+. macOS 14, Intel hardware, and the remote CI runner have not been personally exercised.
+Verified October 7, 2026, on macOS 26.6.2 (25G83), Apple M1 with 16 GiB RAM, Xcode 27.0 (27A266a), and Swift 6.4, targeting macOS 14+. macOS 14, Intel hardware, and remote CI have not been personally exercised.
 
-## Final automated validation
+## Automated coverage
 
-`swift package clean` followed by `Scripts/validate.sh` completed successfully. This covered strict recursive swift-format lint, plist validation, a fresh test build, the complete test suite, an optimized app-bundle build, ad-hoc signature verification, and diff whitespace checks. The build emitted **no compiler warnings**.
+The complete suite contains **96 test functions in eight suites, 154 executions including parameterized cases**. The painting additions comprise 21 core functions (41 executions) and eight AppKit integration functions, alongside the existing 67 functions / 105 executions.
 
-There are **67 test functions in six suites, 105 executions including parameterized cases** (Interval 1 had 33 functions / 46 executions):
+| Suite | Functions | Coverage |
+| --- | ---: | --- |
+| DocumentTests | 6 | Dimensions, blank pixels, viewport/content separation |
+| ViewportTests | 8 | Fit, zoom, aligned origins, pan constraints, physical-pixel display sizing |
+| ImageCodecTests | 13 | PNG/JPEG/TIFF/HEIC, EXIF orientation, alpha, malformed/oversized input, atomic exports |
+| LayerTests | 19 | Layer invariants/operations, immutable sharing, exact source-over, invalidation, merge/flatten, export |
+| NativeCodecTests | 8 | Exact package/disk round trips, all low-alpha values, metadata, invalid/symlink/oversized files |
+| PaintingTests | 21 | Color conversion, explicit Pencil/Brush/Eraser bytes, interpolation, clipping, size bounds, targeting, stale gestures, sampling, preview/full-composite equivalence, persistence/export |
+| NativeDocumentTests | 13 | Native save/open/failure, undo/redo, saved-state traversal, dirty state, cache reuse, window/menu updates, draft rename regression |
+| PaintingDocumentTests | 8 | One undo per gesture, exact redo, no-op/cancel cleanliness, selection/deletion/undo interruption, painted save/reopen, neutral editor state, AppKit event adapter, window/close interruption, layout and canvas refresh regressions |
 
-| Suite | Functions | Executions | Coverage |
-| --- | ---: | ---: | --- |
-| DocumentTests | 6 | 12 | Dimension boundaries, transparent/white blank pixels, viewport/content separation |
-| ViewportTests | 8 | 8 | Fit, clamping, anchor zoom, physical-pixel sizing, Retina alignment, pan constraints |
-| ImageCodecTests | 13 | 20 | PNG fidelity, JPEG matte, TIFF/HEIC imports, alpha, EXIF orientation, malformed/oversized input, atomic exports |
-| LayerTests | 19 | 28 | Add/delete/fallback, last-layer policy, immutable duplication, identity, names, order, visibility/opacity, limits, exact alpha math, merge/flatten, layered PNG/JPEG export |
-| NativeCodecTests | 8 | 24 | Disk/FileWrapper round trips, every persisted field, all low-alpha values, deterministic manifest, import naming, malformed manifests/files, symlinks, oversized sparse files |
-| NativeDocumentTests | 13 | 13 | Native safe saves/replacement/reopen/failure, source preservation, dirty state, undo/redo, saved-state traversal, neutral selection/navigation/export, cache reuse, window/menu updates, draft-name undo regression |
+Coordinate tests exercise 1×/2× backing scales and 1%, 50%, 100%, 800%, and 3200% zoom, with pan and aligned origins. Native event tests draw at 50%, 100%, and 800%, then dispatch Escape and sampling through the actual canvas adapter. Domain tests check explicit alpha outcomes on transparent, opaque and partially transparent pixels, partial edge erasure, imported JPEG erasure, exact hard square Pencil areas, and sparse-point continuity for all three drawing tools. The preview assembly is compared byte-for-byte with a full composite, including layer opacity and patch boundaries.
 
-The parameterized codec tests use actual ImageIO PNG/JPEG/TIFF/HEIC encodings. Pixel tests include explicit expected premultiplied channel values and final JPEG matte tolerances. Native files preserve exact working bytes across every alpha value from 0 through 255. Tests reject missing/duplicate IDs, unsupported schema versions, invalid dimensions/opacity/names/pixel formats, missing/truncated/extra layer files, invalid premultiplied pixels, and filesystem symlinks at every package level.
-
-The AppKit tests instantiate real `NSDocument`/window/canvas objects and native UndoManagers. They verify that seven consecutive layer edits undo to clean content and redo with stable IDs, that save clears dirty state, that undo returns to the saved state, and that export does not replace the editable document. A separate regression covers editing a name, changing selection, undoing, losing text focus, and retaining redo without a stale draft creating another edit.
+Native painting tests prove the committed model remains unchanged throughout drag, an entire stroke undoes back to clean state, redo restores exact bytes, and save/reopen preserves metadata and pixels. Tests also cover active layer deletion and selection during a gesture, window interruption, close, hover, tool/size/color changes and sampling without history. PNG fixtures use colors that round-trip exactly through ImageIO; the native format remains the authority for all low-alpha bytes. JPEG assertions include lossy tolerance and the white matte.
 
 ## Interactive checks actually performed
 
-Unlike Interval 1, computer-use access was available. Native accessibility-tree inspection and screenshots were used with the locally built app and temporary fixtures outside the repository.
+The optimized app was exercised through native computer-use input, accessibility-tree inspection, and screenshots in the system dark appearance:
 
-- Created a 64 × 48 transparent document; visually inspected its checkerboard and native Layers inspector in the system's dark appearance.
-- Added a layer, renamed it with Return, duplicated it, moved it down, changed opacity through the accessibility decrement action, and toggled visibility. Observed the updated names, counts, values, and enabled/disabled controls.
-- Exercised Cmd-Z/Cmd-Shift-Z for visibility and Cmd-Z to restore two layers after Merge Down.
-- Opened a two-layer `.chroma` fixture through the native Open panel. Visually confirmed red at 50% over blue produced purple on the left and blue on the right.
-- Hid a layer and saved the existing native package with Cmd-S; inspected the on-disk manifest to confirm the visibility change. Used Save As to create a second native package, closed it without an unsaved prompt, and reopened it with both layers, names, visibility, and opacity intact.
-- Exported PNG through the File menu and JPEG through its shortcut. Checked the panel explanations and confirmed the layered document retained its identity and stack; output files appeared beside the temporary native package. Exact output pixels/matte are verified by the automated tests.
-- Opened an ordinary transparent PNG and observed one layer named from the source. Added a transparent layer and saved it as a `.chroma` package through the native Save panel, preserving the source PNG.
-- Inspected accessibility labels/values for the layer list, selected rows, visibility toggles, name field, opacity slider, and disabled final-layer deletion/reorder controls. Keyboard Up/Down selection was exercised in the release build.
-- Launched the final optimized bundle and inspected its dark-mode layout after the draft-name fix and removal of dense slider tick marks. The independent source review scored the rename correction resolved; the automated regression covers the complete post-fix undo sequence.
+- Created a 128×96 transparent image; drew a fast long Brush stroke at fit/high zoom and observed continuous round output.
+- Cmd-Z removed the entire stroke, and Cmd-Shift-Z restored it. Eraser cut through the stroke and exposed checkerboard. The dual-color round footprint and square Pencil footprint were visible.
+- Selected Pencil and drew hard square-edged marks. Entered a size of 1 through the numeric field, confirmed the accessibility value changed, and drew a thin line. Tool menu selected values, size units, disabled sampling size, color well labels, and layer control state were inspected.
+- Sampled empty canvas with Eyedropper and observed foreground `rgba(0,0,0,0)`, then sampled the black mark and observed `rgba(0,0,0,1)` in the accessibility tree.
+- Inspected the final native control strip on a 1100-point window. A separate scoped UI review returned `ship` with no material findings, explicitly limiting that verdict to supplied screenshot/source evidence.
 
-Live control sometimes required separate steps to let native sheets establish focus. The final release also coexisted with an earlier debug process; some attempted direct row clicks/shortcuts did not produce an observable change. Those attempts are not counted as passed interaction checks. The complete final-release rename/undo sequence is supported by automated AppKit coverage, not a claimed successful live replay.
+Live checks caught and led to regressions for unchanged SwiftUI layouts cancelling gestures and a stale canvas representable after commit. Both fixes were subsequently exercised in the release app, with visible brush/eraser output and native undo.
 
-## Remaining verification boundaries
+Some native AX interactions needed a separate observation before the next action to establish focus. Native color wells exposed the expected panel action, but attempts to open the color panel did not yield an observable panel in the computer-use surface. **Color-panel editing/alpha interaction is therefore unverified live**, not counted as passed. Conversion, foreground/background state and neutral dirty semantics have automated coverage.
 
-Actual VoiceOver speech/navigation was **not** exercised. AX labels and selected/enabled state inspection are useful evidence but not a VoiceOver pass. Light appearance, minimum-size/resized windows, physical mouse drag/slider-drag coalescing, real trackpad pinch/pan, non-Retina/multiple displays, Finder double-click associations, replacement-confirmation cancellation, and close/quit with multiple dirty windows remain manual checks. White blank pixels, delete, flatten, malformed-project rejection, and most error paths have automated coverage; no additional hands-on claim is made for them.
+## Remaining boundaries
 
-No performance or peak-memory benchmark is claimed. Compositing and native package encoding remain synchronous; raw native rasters are uncompressed, and undo can retain removed/merged buffers beyond the current-stack pixel bound. Merge Down is deliberately limited to the bottom pair for exact 8-bit appearance; arbitrary middle merges are deferred. Import remains 8-bit sRGB with metadata loss and first/primary-image semantics. Signing is local ad-hoc, with no notarization or release configuration.
+No claim is made for actual VoiceOver speech/navigation, light appearance, physical non-Retina/multiple displays, real trackpad input, minimum-size layout, or a full manual save/export/reopen cycle with painted content. Those file paths are exercised by automated native-document and image-codec tests. Live testing did not establish background color-panel editing, modifier-drag panning, focus-loss mid-drag, or final pixel precision visually; the corresponding ownership, transform, and interruption rules have deterministic tests where listed above. The canvas exposes an image description and interaction help, not a claim of full nonvisual raster editing.
 
-## Suggested reviewer pass
+[Painting measurements](painting.md) document repeatable CPU timing, all observed timing ranges, known memory costs, and limitations. They are not a frame-rate guarantee. Full-raster undo history remains memory-intensive; property edits and undo/redo still use synchronous full compositing. Maximum-size images, worst-case 128-layer stacks, and peak whole-app memory have not been benchmarked. Native package saves remain synchronous/uncompressed, and signing is local ad-hoc with no notarization or release configuration.
 
-1. Exercise the remaining manual boundaries above, especially a long opacity drag followed by one Undo and actual VoiceOver navigation.
-2. Edit a layer name without Return, select another layer, select back, and use Undo/Redo; confirm no stale rename is recommitted.
-3. Verify both Save and cancelled Save As on imported and native documents, plus close/quit prompts for multiple edited windows.
-4. Check small/large canvases and representative larger stacks for acceptable UI latency before expanding the pixel-editing scope.
+## Final validation
 
-No PR, merge, tag, release, or Interval 3 work is part of this interval.
+Run from a clean package state:
+
+```sh
+swift package clean
+Scripts/validate.sh
+```
+
+The clean run completed successfully: strict recursive swift-format lint, plist configuration, all 96 functions / 154 executions, optimized app/benchmark builds, ad-hoc bundle signature verification, and diff whitespace checks passed. No compiler warnings were emitted. Benchmark outputs are produced on demand; generated apps, screenshots, temporary fixtures, logs, and user-specific files are excluded from commits.
+
+Recommended reviewer follow-up: native color-panel alpha editing, VoiceOver, physical multi-display coordinates, minimum-size/light layouts, and large-image interactive latency. The next feature interval should build a small selection/region-editing foundation on the existing raster replacement and stroke transaction boundary, after review of this branch.

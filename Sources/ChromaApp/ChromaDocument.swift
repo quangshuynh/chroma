@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 final class ChromaDocument: NSDocument {
     // Worker-thread reads exchange only immutable snapshots through this lock.
     private nonisolated let storage = DocumentStorage()
+    private(set) var stroke: PixelStroke?
     var content: ImageDocument? { storage.snapshot?.content }
     var rendered: RasterSurface? { storage.snapshot?.raster }
 
@@ -28,7 +29,10 @@ final class ChromaDocument: NSDocument {
             try typeName == NativeDocumentCodec.type.identifier
             ? NativeDocumentCodec.read(from: url) : ImageCodec.decode(url: url)
         storage.replace(content, raster: try LayerCompositor.composite(content))
-        Task { @MainActor [weak self] in self?.refreshWindows() }
+        Task { @MainActor [weak self] in
+            self?.cancelStroke()
+            self?.refreshWindows()
+        }
     }
 
     override func fileWrapper(ofType typeName: String) throws -> FileWrapper {
@@ -43,6 +47,7 @@ final class ChromaDocument: NSDocument {
 
     @discardableResult
     func perform(_ edit: LayerEdit) throws -> Bool {
+        cancelStroke()
         guard let previous = content else { return false }
         var next = previous
         guard try next.apply(edit) else { return false }
@@ -51,18 +56,21 @@ final class ChromaDocument: NSDocument {
     }
 
     func selectLayer(_ id: UUID) throws {
+        cancelStroke()
         guard var next = content, let raster = rendered else { return }
         try next.selectLayer(id)
         storage.replace(next, raster: raster)
         refreshWindows()
     }
 
-    private func restore(_ next: ImageDocument, actionName: String) throws {
+    private func restore(_ next: ImageDocument, actionName: String, preparedRaster: RasterSurface? = nil) throws {
+        cancelStroke()
         guard let previous = content else { return }
         // Compute before changing content/history. Failed allocation leaves the old document intact.
         let raster =
-            try previous.renderRevision == next.renderRevision
-            ? (rendered ?? LayerCompositor.composite(next)) : LayerCompositor.composite(next)
+            try preparedRaster
+            ?? (previous.renderRevision == next.renderRevision
+                ? (rendered ?? LayerCompositor.composite(next)) : LayerCompositor.composite(next))
         let manager = undoManager
         let needsGroup = manager.map { !$0.isUndoing && !$0.isRedoing } ?? false
         if needsGroup { manager?.beginUndoGrouping() }
@@ -76,14 +84,66 @@ final class ChromaDocument: NSDocument {
         refreshWindows()
     }
 
+    func beginStroke(at point: CGPoint, settings: StrokeSettings) throws {
+        cancelStroke()
+        guard let content else { return }
+        let next = try PixelStroke(document: content, settings: settings)
+        next.append(point)
+        try next.refreshPreview()
+        stroke = next
+        refreshStrokeViews()
+    }
+
+    func continueStroke(at point: CGPoint) throws {
+        guard let stroke, let content else { return }
+        do {
+            try stroke.validate(content)
+            stroke.append(point)
+            try stroke.refreshPreview()
+            refreshStrokeViews()
+        } catch {
+            cancelStroke()
+            throw error
+        }
+    }
+
+    func commitStroke(at point: CGPoint) throws {
+        guard let stroke, var next = content else { return }
+        defer { cancelStroke() }
+        stroke.append(point)
+        guard let raster = try stroke.finish(in: next) else { return }
+        try next.replaceRaster(raster, for: stroke.layerID)
+        let composite = try rendered.map { try stroke.compositedPreview(over: $0) }
+        try restore(next, actionName: stroke.settings.tool.rawValue + " Stroke", preparedRaster: composite)
+    }
+
+    func cancelStroke() {
+        guard stroke != nil else { return }
+        stroke = nil
+        refreshStrokeViews()
+    }
+
+    private func refreshStrokeViews() {
+        for case let controller as EditorWindowController in windowControllers {
+            controller.state.canvas?.needsDisplay = true
+        }
+    }
+
+    override func close() {
+        cancelStroke()
+        super.close()
+    }
+
     private func refreshWindows() {
         guard let snapshot = storage.snapshot else { return }
         for case let controller as EditorWindowController in windowControllers {
             controller.presentation.update(content: snapshot.content, raster: snapshot.raster)
+            controller.state.canvas?.update(snapshot.raster)
         }
     }
 
     override func save(_ sender: Any?) {
+        cancelStroke()
         if fileType == NativeDocumentCodec.type.identifier, fileURL != nil {
             super.save(sender)
         } else {
@@ -92,6 +152,7 @@ final class ChromaDocument: NSDocument {
     }
 
     override func prepareSavePanel(_ savePanel: NSSavePanel) -> Bool {
+        cancelStroke()
         savePanel.allowedContentTypes = [NativeDocumentCodec.type]
         savePanel.title = "Save Chroma Document"
         savePanel.message = "Preserve all layers and transparency in an editable Chroma document."

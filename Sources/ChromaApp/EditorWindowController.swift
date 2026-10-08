@@ -34,6 +34,7 @@ final class EditorWindowController: NSWindowController, NSMenuItemValidation {
 
     private func export(_ format: ExportFormat) {
         guard let window, !isExporting else { return }
+        state.canvas?.cancelInteraction()
         let panel = NSSavePanel()
         panel.allowedContentTypes = [format.type]
         panel.title = format == .jpeg ? "Export JPEG" : "Export PNG"
@@ -130,8 +131,10 @@ private struct EditorView: View {
             }
             .buttonStyle(.borderless).padding(.horizontal, 16).frame(height: 42)
             Divider()
+            PaintingControls(state: state)
+            Divider()
             HStack(spacing: 0) {
-                CanvasView(content: presentation.raster, state: state)
+                CanvasView(presentation: presentation, state: state)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 if state.inspectorVisible {
                     Divider()
@@ -144,7 +147,8 @@ private struct EditorView: View {
             HStack {
                 Text("\(content.size.width) × \(content.size.height) px").monospacedDigit()
                 Spacer()
-                Text("Scroll or drag to pan · Pinch to zoom")
+                Text(state.message ?? "Option-drag to pan · Escape cancels stroke").lineLimit(1).help(
+                    state.message ?? "Scroll to pan; pinch to zoom")
             }.font(.system(size: 11)).foregroundStyle(.secondary)
                 .padding(.horizontal, 14).frame(height: 28)
         }
