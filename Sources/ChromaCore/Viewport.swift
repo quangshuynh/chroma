@@ -63,4 +63,25 @@ public struct Viewport: Equatable, Sendable {
             width: size.width, height: size.height
         )
     }
+    /// AppKit canvas is bottom-left; canonical raster rows are top-left. Backing scale only
+    /// participates through imageRect, exactly like drawing (including aligned origins).
+    public func documentPoint(fromCanvas point: CGPoint, image: PixelSize, viewport: CGSize, backingScale: Double)
+        -> CGPoint
+    {
+        let rect = imageRect(image: image, viewport: viewport, backingScale: backingScale)
+        return CGPoint(
+            x: (point.x - rect.minX) * Double(image.width) / rect.width,
+            y: (rect.maxY - point.y) * Double(image.height) / rect.height)
+    }
+
+    public func canvasRect(fromDocument rect: CGRect, image: PixelSize, viewport: CGSize, backingScale: Double)
+        -> CGRect
+    {
+        let imageRect = imageRect(image: image, viewport: viewport, backingScale: backingScale)
+        let scale = imageRect.width / Double(image.width)
+        return CGRect(
+            x: imageRect.minX + rect.minX * scale, y: imageRect.maxY - rect.maxY * scale,
+            width: rect.width * scale, height: rect.height * scale)
+    }
+
 }

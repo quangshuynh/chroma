@@ -27,4 +27,39 @@ public enum LayerCompositor {
         }
         return try RasterSurface(size: document.size, premultipliedRGBA: result)
     }
+    /// Integer, clipped document region. Used for transient painting previews.
+    static func compositeRegion(_ document: ImageDocument, rect: CGRect, replacing id: UUID, bytes: Data) throws
+        -> RasterSurface
+    {
+        let width = Int(rect.width)
+        let height = Int(rect.height)
+        var result = Data(count: width * height * 4)
+        result.withUnsafeMutableBytes { rawOutput in
+            let output = rawOutput.bindMemory(to: UInt8.self)
+            for layer in document.layers where layer.isVisible && layer.opacity > 0 {
+                let data = layer.id == id ? bytes : layer.raster.rgbaBytes
+                data.withUnsafeBytes { rawInput in
+                    let input = rawInput.bindMemory(to: UInt8.self)
+                    for y in 0..<height {
+                        for x in 0..<width {
+                            let src = ((Int(rect.minY) + y) * document.size.width + Int(rect.minX) + x) * 4
+                            let dst = (y * width + x) * 4
+                            let remaining = 1 - Double(input[src + 3]) / 255 * layer.opacity
+                            for channel in 0..<4 {
+                                output[dst + channel] = UInt8(
+                                    min(
+                                        255,
+                                        max(
+                                            0,
+                                            (Double(input[src + channel]) * layer.opacity
+                                                + Double(output[dst + channel]) * remaining).rounded())))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return try RasterSurface(size: PixelSize(width: width, height: height), premultipliedRGBA: result)
+    }
+
 }
