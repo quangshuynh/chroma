@@ -37,6 +37,43 @@ struct PaintingDocumentTests {
         #expect(doc.content!.activeLayer.raster.rgbaBytes == after)
     }
 
+    @Test func repeatedStrokeAndLayerUndoRedoStaySynchronousAndSeparatelyGrouped() throws {
+        let doc = try document()
+        defer { doc.close() }
+        let manager = try #require(doc.undoManager)
+        let before = try #require(doc.rendered).rgbaBytes
+        try doc.beginStroke(at: CGPoint(x: 2.5, y: 2.5), settings: settings)
+        try doc.continueStroke(at: CGPoint(x: 6.5, y: 2.5))
+        try doc.commitStroke(at: CGPoint(x: 12.5, y: 2.5))
+        let painted = try #require(doc.rendered).rgbaBytes
+        let layerID = try #require(doc.content?.activeLayerID)
+        let originalName = try #require(doc.content?.activeLayer.name)
+        try doc.perform(.rename(layerID, "Painted"))
+
+        for _ in 0..<5 {
+            #expect(manager.groupingLevel == 0)
+            #expect(manager.undoActionName == "Rename Layer")
+            manager.undo()
+            #expect(doc.content?.activeLayer.name == originalName)
+            #expect(doc.rendered?.rgbaBytes == painted && doc.isDocumentEdited)
+            #expect(manager.undoActionName == "Brush Stroke")
+            manager.undo()
+            #expect(doc.rendered?.rgbaBytes == before)
+            #expect(doc.content?.activeLayer.raster.rgbaBytes == before)
+            #expect(!doc.isDocumentEdited && !manager.canUndo)
+            #expect(manager.redoActionName == "Brush Stroke")
+            manager.redo()
+            #expect(doc.rendered?.rgbaBytes == painted)
+            #expect(doc.content?.activeLayer.raster.rgbaBytes == painted)
+            #expect(doc.isDocumentEdited && manager.redoActionName == "Rename Layer")
+            manager.redo()
+            #expect(doc.content?.activeLayer.name == "Painted")
+            #expect(doc.content?.activeLayerID == layerID)
+            #expect(doc.rendered?.rgbaBytes == painted && !manager.canRedo)
+            #expect(manager.groupingLevel == 0)
+        }
+    }
+
     @Test func noOpStrokeDoesNotDirtyOrRegisterUndo() throws {
         let doc = try document()
         defer { doc.close() }

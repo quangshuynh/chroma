@@ -76,7 +76,11 @@ final class ChromaDocument: NSDocument {
         if needsGroup { manager?.beginUndoGrouping() }
         defer { if needsGroup { manager?.endUndoGrouping() } }
         manager?.registerUndo(withTarget: self) { target in
-            do { try target.restore(previous, actionName: actionName) } catch { target.presentError(error) }
+            // AppKit's document responder chain and our programmatic callers undo on the main actor.
+            // Older SDKs do not annotate this synchronous callback; keep redo in the current undo group.
+            MainActor.assumeIsolated {
+                do { try target.restore(previous, actionName: actionName) } catch { target.presentError(error) }
+            }
         }
         undoManager?.setActionName(actionName)
         storage.replace(next, raster: raster)
