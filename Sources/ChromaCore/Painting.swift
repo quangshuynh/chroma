@@ -161,7 +161,9 @@ public final class PixelStroke {
     public func compositedPreview(over base: RasterSurface) throws -> RasterSurface {
         guard base.size == source.size else { throw LayerError.invalidRaster }
         try refreshPreview()
-        var bytes = base.rgbaBytes
+        // The base also belongs to the document and its undo snapshots. Allocate owned
+        // writable storage instead of mutating Data bridged from its CGImage provider.
+        var bytes = base.rgbaBytes.withUnsafeBytes { Data(bytes: $0.baseAddress!, count: $0.count) }
         bytes.withUnsafeMutableBytes { destination in
             for preview in previews.values {
                 preview.raster.rgbaBytes.withUnsafeBytes { input in

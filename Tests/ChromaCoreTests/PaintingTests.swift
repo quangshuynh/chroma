@@ -236,6 +236,35 @@ struct PaintingTests {
         }
     }
 
+    @Test func previewAssemblyPreservesSourceAndEarlierSnapshots() throws {
+        let doc = try blank(16)
+        let base = try LayerCompositor.composite(doc)
+        // Independent expected bytes cannot change along with an aliased image provider.
+        let transparent = Data(count: 16 * 16 * 4)
+        let stroke = try PixelStroke(
+            document: doc, settings: StrokeSettings(tool: .pencil, diameter: 1, color: .white))
+        stroke.append(CGPoint(x: 2.5, y: 3.5))
+        try stroke.refreshPreview()
+        #expect(doc.activeLayer.raster.rgbaBytes == transparent)
+        let first = try stroke.compositedPreview(over: base)
+        var expectedFirst = transparent
+        expectedFirst.replaceSubrange((3 * 16 + 2) * 4..<(3 * 16 + 2) * 4 + 4, with: [255, 255, 255, 255])
+        #expect(first.rgbaBytes == expectedFirst)
+        #expect(base.rgbaBytes == transparent)
+        #expect(doc.activeLayer.raster.rgbaBytes == transparent)
+
+        stroke.append(CGPoint(x: 5.5, y: 3.5))
+        let finished = try #require(try stroke.finish(in: doc))
+        let second = try stroke.compositedPreview(over: base)
+        var expectedSecond = transparent
+        expectedSecond.replaceSubrange((3 * 16 + 2) * 4..<(3 * 16 + 6) * 4, with: repeatElement(UInt8(255), count: 16))
+        #expect(finished.rgbaBytes == expectedSecond)
+        #expect(second.rgbaBytes == expectedSecond)
+        #expect(first.rgbaBytes == expectedFirst)
+        #expect(base.rgbaBytes == transparent)
+        #expect(doc.activeLayer.raster.rgbaBytes == transparent)
+    }
+
     @Test func paintedNativeRoundTripAndPNGAreExactJPEGUsesWhiteMatte() throws {
         var doc = try blank(16)
         let stroke = try PixelStroke(
