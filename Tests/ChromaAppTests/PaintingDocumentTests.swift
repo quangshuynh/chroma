@@ -15,10 +15,13 @@ struct PaintingDocumentTests {
         let doc = try document()
         defer { doc.close() }
         let before = doc.content!.activeLayer.raster.rgbaBytes
+        let transparent = Data(count: 16 * 16 * 4)
+        #expect(before == transparent)
         try doc.beginStroke(at: CGPoint(x: 2.5, y: 2.5), settings: settings)
         for x in 3...12 { try doc.continueStroke(at: CGPoint(x: Double(x) + 0.5, y: 2.5)) }
         #expect(!doc.isDocumentEdited && doc.undoManager?.canUndo == false)
         #expect(doc.content!.activeLayer.raster.rgbaBytes == before)
+        #expect(doc.content!.activeLayer.raster.rgbaBytes == transparent)
         try doc.commitStroke(at: CGPoint(x: 13.5, y: 2.5))
         let after = doc.content!.activeLayer.raster.rgbaBytes
         let id = doc.content!.activeLayerID
@@ -27,6 +30,7 @@ struct PaintingDocumentTests {
         doc.undoManager?.undo()
         #expect(!doc.isDocumentEdited && doc.undoManager?.canUndo == false)
         #expect(doc.content!.activeLayer.raster.rgbaBytes == before)
+        #expect(doc.content!.activeLayer.raster.rgbaBytes == transparent)
         doc.undoManager?.redo()
         #expect(doc.content!.activeLayer.raster.rgbaBytes == after)
         #expect(doc.content?.activeLayerID == id)
@@ -35,6 +39,44 @@ struct PaintingDocumentTests {
         doc.cancelStroke()
         #expect(!doc.isDocumentEdited && doc.stroke == nil)
         #expect(doc.content!.activeLayer.raster.rgbaBytes == after)
+    }
+
+    @Test func repeatedStrokeAndLayerUndoRedoStaySynchronousAndSeparatelyGrouped() throws {
+        let doc = try document()
+        defer { doc.close() }
+        let manager = try #require(doc.undoManager)
+        let before = try #require(doc.rendered).rgbaBytes
+        try doc.beginStroke(at: CGPoint(x: 2.5, y: 2.5), settings: settings)
+        try doc.continueStroke(at: CGPoint(x: 6.5, y: 2.5))
+        try doc.commitStroke(at: CGPoint(x: 12.5, y: 2.5))
+        let painted = try #require(doc.rendered).rgbaBytes
+        #expect(painted != before)
+        let layerID = try #require(doc.content?.activeLayerID)
+        let originalName = try #require(doc.content?.activeLayer.name)
+        try doc.perform(.rename(layerID, "Painted"))
+
+        for _ in 0..<5 {
+            #expect(manager.groupingLevel == 0)
+            #expect(manager.undoActionName == "Rename Layer")
+            manager.undo()
+            #expect(doc.content?.activeLayer.name == originalName)
+            #expect(doc.rendered?.rgbaBytes == painted && doc.isDocumentEdited)
+            #expect(manager.undoActionName == "Brush Stroke")
+            manager.undo()
+            #expect(doc.rendered?.rgbaBytes == before)
+            #expect(doc.content?.activeLayer.raster.rgbaBytes == before)
+            #expect(!doc.isDocumentEdited && !manager.canUndo)
+            #expect(manager.redoActionName == "Brush Stroke")
+            manager.redo()
+            #expect(doc.rendered?.rgbaBytes == painted)
+            #expect(doc.content?.activeLayer.raster.rgbaBytes == painted)
+            #expect(doc.isDocumentEdited && manager.redoActionName == "Rename Layer")
+            manager.redo()
+            #expect(doc.content?.activeLayer.name == "Painted")
+            #expect(doc.content?.activeLayerID == layerID)
+            #expect(doc.rendered?.rgbaBytes == painted && !manager.canRedo)
+            #expect(manager.groupingLevel == 0)
+        }
     }
 
     @Test func noOpStrokeDoesNotDirtyOrRegisterUndo() throws {
@@ -125,6 +167,7 @@ struct PaintingDocumentTests {
         controller.state.tool = .pencil
         controller.state.diameter = 1
         controller.state.foreground = .white
+        let transparent = Data(count: 16 * 16 * 4)
         // Direct AppKit event dispatch tests actual adapter, including inverse coordinate mapping.
         func event(_ type: NSEvent.EventType, _ point: CGPoint, flags: NSEvent.ModifierFlags = []) throws -> NSEvent {
             try #require(
@@ -135,13 +178,31 @@ struct PaintingDocumentTests {
         for zoom in [0.5, 1, 8] {
             canvas.zoom(to: zoom)
             let center = CGPoint(x: canvas.bounds.midX, y: canvas.bounds.midY)
+            let point = canvas.documentPoint(center)
+            #expect(point.x >= 0 && point.x < 16 && point.y >= 0 && point.y < 16)
             canvas.mouseMoved(with: try event(.mouseMoved, center))
             #expect(!doc.isDocumentEdited)
             canvas.mouseDown(with: try event(.leftMouseDown, center))
+            canvas.mouseDragged(with: try event(.leftMouseDragged, center))
+            #expect(doc.content?.activeLayer.raster.rgbaBytes == transparent)
+            #expect(!doc.isDocumentEdited)
             canvas.mouseUp(with: try event(.leftMouseUp, center))
             #expect(doc.isDocumentEdited)
+            let painted = try #require(doc.content?.activeLayer.raster.rgbaBytes)
+            #expect(painted != transparent)
+            #expect(canvas.displayedRaster.rgbaBytes == painted)
+            #expect(doc.undoManager?.undoActionName == "Pencil Stroke")
             doc.undoManager?.undo()
             #expect(!doc.isDocumentEdited)
+            #expect(doc.content?.activeLayer.raster.rgbaBytes == transparent)
+            #expect(canvas.displayedRaster.rgbaBytes == transparent)
+            #expect(doc.undoManager?.canUndo == false)
+            doc.undoManager?.redo()
+            #expect(doc.isDocumentEdited)
+            #expect(doc.content?.activeLayer.raster.rgbaBytes == painted)
+            #expect(canvas.displayedRaster.rgbaBytes == painted)
+            doc.undoManager?.undo()
+            #expect(!doc.isDocumentEdited && canvas.displayedRaster.rgbaBytes == transparent)
         }
         canvas.zoom(to: 8)
         let center = CGPoint(x: canvas.bounds.midX, y: canvas.bounds.midY)
@@ -153,10 +214,15 @@ struct PaintingDocumentTests {
             ))
         canvas.keyDown(with: escape)
         #expect(doc.stroke == nil && !doc.isDocumentEdited)
+        #expect(doc.content?.activeLayer.raster.rgbaBytes == transparent)
+        #expect(canvas.displayedRaster.rgbaBytes == transparent)
         controller.state.tool = .eyedropper
+        #expect(!doc.isDocumentEdited)
+        #expect(EditorColor.sample(canvas.displayedRaster, at: canvas.documentPoint(center))?.alpha == 0)
         canvas.mouseDown(with: try event(.leftMouseDown, center))
         #expect(controller.state.foreground.alpha == 0 && !doc.isDocumentEdited)
         canvas.mouseDown(with: try event(.leftMouseDown, center, flags: .option))
+        canvas.mouseDragged(with: try event(.leftMouseDragged, center, flags: .option))
         canvas.mouseUp(with: try event(.leftMouseUp, center))
         #expect(!doc.isDocumentEdited)
     }
@@ -181,15 +247,28 @@ struct PaintingDocumentTests {
         let controller = try #require(doc.windowControllers.first as? EditorWindowController)
         controller.window?.contentView?.layoutSubtreeIfNeeded()
         let canvas = try #require(controller.state.canvas)
+        let before = Data(count: 16 * 16 * 4)
+        #expect(canvas.displayedRaster.rgbaBytes == before)
         try doc.beginStroke(at: CGPoint(x: 2.5, y: 2.5), settings: settings)
         canvas.setFrameSize(canvas.frame.size)
         #expect(doc.stroke != nil)
         try doc.commitStroke(at: CGPoint(x: 12.5, y: 2.5))
         #expect(canvas.displayedRaster.image === doc.rendered?.image)
         #expect(canvas.displayedRaster.rgbaBytes.contains { $0 > 0 })
+        let painted = try #require(doc.content?.activeLayer.raster.rgbaBytes)
+        #expect(canvas.displayedRaster.rgbaBytes == painted)
         doc.undoManager?.undo()
+        #expect(doc.content?.activeLayer.raster.rgbaBytes == before)
+        #expect(doc.rendered?.rgbaBytes == before)
+        #expect(!doc.isDocumentEdited)
         #expect(canvas.displayedRaster.image === doc.rendered?.image)
         #expect(canvas.displayedRaster.rgbaBytes.allSatisfy { $0 == 0 })
+        doc.undoManager?.redo()
+        #expect(doc.content?.activeLayer.raster.rgbaBytes == painted)
+        #expect(doc.rendered?.rgbaBytes == painted)
+        #expect(canvas.displayedRaster.rgbaBytes == painted)
+        #expect(canvas.displayedRaster.image === doc.rendered?.image)
+        #expect(doc.isDocumentEdited)
     }
 
     private func document() throws -> ChromaDocument {
