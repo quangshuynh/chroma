@@ -13,7 +13,7 @@ final class EditorWindowController: NSWindowController, NSMenuItemValidation {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760),
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.minSize = NSSize(width: 640, height: 460)
+        window.minSize = NSSize(width: 640, height: 520)
         window.isReleasedWhenClosed = false
         window.title = "Untitled"
         window.tabbingMode = .preferred
@@ -132,6 +132,8 @@ private struct EditorView: View {
             .buttonStyle(.borderless).padding(.horizontal, 16).frame(height: 42)
             Divider()
             PaintingControls(state: state)
+            Text(state.selectionDescription).font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.bottom, 4)
             Divider()
             HStack(spacing: 0) {
                 CanvasView(presentation: presentation, state: state)
@@ -147,7 +149,7 @@ private struct EditorView: View {
             HStack {
                 Text("\(content.size.width) × \(content.size.height) px").monospacedDigit()
                 Spacer()
-                Text(state.message ?? "Option-drag to pan · Escape cancels stroke").lineLimit(1).help(
+                Text(state.message ?? "Option-drag to pan · Escape cancels edit").lineLimit(1).help(
                     state.message ?? "Scroll to pan; pinch to zoom")
             }.font(.system(size: 11)).foregroundStyle(.secondary)
                 .padding(.horizontal, 14).frame(height: 28)

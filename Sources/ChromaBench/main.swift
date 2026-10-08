@@ -60,3 +60,28 @@ for run in 1...3 {
         "stamps=\(stroke.stampCount) preview_pixels=\(stroke.previewPixelCount) max_patches_per_event=\(maxPatchCount) preview_cache_bytes=\(previewBytes) working_plus_coverage_bytes=\(side * side * 5) one_undo_raster_bytes=\(side * side * 4) process_peak_rss_bytes=\(usage.ru_maxrss)"
     )
 }
+
+// Region workload: 128px ellipse, 60 distinct translations, plus a half-canvas ellipse.
+for extent in [min(128, side / 2), side / 2] {
+    let (mask, geometryTime) = time {
+        SelectionMask.ellipse(CGRect(x: side / 4, y: side / 4, width: extent, height: extent), size: size)
+    }
+    let (_, outlineTime) = time { mask.outline() }
+    let (move, setupTime) = try time { try PixelMove(document: document, selection: mask) }
+    var elapsed = 0.0
+    var maximum = 0.0
+    for index in 1...60 {
+        let (_, eventTime) = try time { try move.update(dx: index, dy: -index) }
+        elapsed += eventTime
+        maximum = max(maximum, eventTime)
+    }
+    let (_, finishTime) = try time { try move.finish(in: document) }
+    let (_, deleteTime) = try time { try RegionEditing.delete(document.activeLayer.raster, selection: mask) }
+    let (_, cropTime) = try time { try RegionEditing.crop(document, selection: mask) }
+    print(
+        String(
+            format:
+                "selection_extent=%d geometry_ms=%.3f outline_ms=%.3f move_setup_ms=%.3f move_mean_event_ms=%.3f move_max_event_ms=%.3f move_finish_ms=%.3f delete_ms=%.3f crop_ms=%.3f preview_pixels=%d",
+            extent, geometryTime, outlineTime, setupTime, elapsed / 60, maximum, finishTime, deleteTime, cropTime,
+            move.previewPixelCount))
+}

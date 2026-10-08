@@ -1,10 +1,14 @@
 # Painting
 
-Choose Pencil, Brush, Eraser, or Eyedropper from the native Tool menu above the canvas. Enter a size or use the stepper (1–512 document pixels). Foreground and Background open native color controls with alpha; the swap button makes the background the next painting color. Eraser is full strength and ignores color alpha. Eyedropper reads the visible composite, not the selected layer or checkerboard, and assigns foreground. Size is disabled while sampling.
+Choose Pencil, Brush, Eraser, or Eyedropper from the native Tool menu above the canvas. Enter a size or use the stepper (1–512 document pixels). Foreground and Background open native color controls with alpha; the swap button makes the background the next painting color. Eraser is full strength and ignores color alpha. Eyedropper reads the visible composite, not the selected layer or checkerboard, and assigns foreground. Size is disabled for sampling, selection, and movement tools.
 
 Pencil is a pixel-aligned square and replaces covered pixels with the selected premultiplied color. Brush is round, with a one-pixel antialiased transition and source-over alpha. Eraser uses the same round geometry but reduces all premultiplied channels, revealing lower layers or transparency. Overlapping stamps use the maximum coverage reached during a gesture. Separate gestures can accumulate opacity or erasure. No pressure, texture, dynamics, or brush preset system is implied.
 
 A down/drag/up gesture is one native Undo step. Escape and interaction interruptions roll back unfinished strokes. Paint only on a visible, nonzero-opacity active layer; the status line explains rejected attempts. Option-drag, scroll, and arrow keys pan. Zoom and Retina scale never change document-pixel brush size. Tool/color/navigation changes and sampling are clean operations. Save and export contain only committed pixels. `.chroma` schema version 1 is unchanged.
+
+## Selection-aware mutation
+
+Rectangle Select and Ellipse Select are available in the same native Tool menu. `PixelStroke` captures the current binary row-span mask at mouse-down and skips unselected pixels at the existing stamp boundary; it does not duplicate the painting engine. Nil selection permits the entire layer, while an active empty mask permits no edits. Pencil replacement, Brush/Eraser edge coverage, interpolation, and maximum per-stroke coverage retain their original semantics. Selection changes cancel unfinished strokes and do not dirty content. See [selections](selections.md) for geometry, region operations, movement lifecycle, and measured performance.
 
 ## Repeatable benchmark
 

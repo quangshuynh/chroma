@@ -7,6 +7,8 @@ final class ChromaDocument: NSDocument {
     // Worker-thread reads exchange only immutable snapshots through this lock.
     private nonisolated let storage = DocumentStorage()
     private(set) var stroke: PixelStroke?
+    private(set) var selection: SelectionMask?
+    private(set) var movement: PixelMove?
     var content: ImageDocument? { storage.snapshot?.content }
     var rendered: RasterSurface? { storage.snapshot?.raster }
 
@@ -30,7 +32,8 @@ final class ChromaDocument: NSDocument {
             ? NativeDocumentCodec.read(from: url) : ImageCodec.decode(url: url)
         storage.replace(content, raster: try LayerCompositor.composite(content))
         Task { @MainActor [weak self] in
-            self?.cancelStroke()
+            self?.cancelTransientEdits()
+            self?.setSelection(nil)
             self?.refreshWindows()
         }
     }
@@ -47,7 +50,7 @@ final class ChromaDocument: NSDocument {
 
     @discardableResult
     func perform(_ edit: LayerEdit) throws -> Bool {
-        cancelStroke()
+        cancelTransientEdits()
         guard let previous = content else { return false }
         var next = previous
         guard try next.apply(edit) else { return false }
@@ -56,7 +59,7 @@ final class ChromaDocument: NSDocument {
     }
 
     func selectLayer(_ id: UUID) throws {
-        cancelStroke()
+        cancelTransientEdits()
         guard var next = content, let raster = rendered else { return }
         try next.selectLayer(id)
         storage.replace(next, raster: raster)
@@ -64,7 +67,7 @@ final class ChromaDocument: NSDocument {
     }
 
     private func restore(_ next: ImageDocument, actionName: String, preparedRaster: RasterSurface? = nil) throws {
-        cancelStroke()
+        cancelTransientEdits()
         guard let previous = content else { return }
         // Compute before changing content/history. Failed allocation leaves the old document intact.
         let raster =
@@ -83,15 +86,16 @@ final class ChromaDocument: NSDocument {
             }
         }
         undoManager?.setActionName(actionName)
+        if previous.size != next.size { selection = nil }
         storage.replace(next, raster: raster)
         // NSDocument observes its UndoManager to track edits and saved-state traversal.
         refreshWindows()
     }
 
     func beginStroke(at point: CGPoint, settings: StrokeSettings) throws {
-        cancelStroke()
+        cancelTransientEdits()
         guard let content else { return }
-        let next = try PixelStroke(document: content, settings: settings)
+        let next = try PixelStroke(document: content, settings: settings, selection: selection)
         next.append(point)
         try next.refreshPreview()
         stroke = next
@@ -106,7 +110,7 @@ final class ChromaDocument: NSDocument {
             try stroke.refreshPreview()
             refreshStrokeViews()
         } catch {
-            cancelStroke()
+            cancelTransientEdits()
             throw error
         }
     }
@@ -127,6 +131,95 @@ final class ChromaDocument: NSDocument {
         refreshStrokeViews()
     }
 
+    func cancelTransientEdits() {
+        cancelStroke()
+        cancelMove()
+        for case let controller as EditorWindowController in windowControllers {
+            controller.state.canvas?.discardGesture()
+        }
+    }
+
+    func setSelection(_ mask: SelectionMask?) {
+        cancelTransientEdits()
+        guard mask == nil || mask?.size == content?.size else { return }
+        selection = mask
+        refreshSelectionViews()
+    }
+
+    var selectionDescription: String { (movement?.movedSelection ?? selection)?.description ?? "No selection" }
+
+    private func refreshSelectionViews() {
+        for case let controller as EditorWindowController in windowControllers {
+            controller.state.canvas?.selectionChanged()
+        }
+    }
+
+    func beginMove() throws {
+        cancelTransientEdits()
+        guard let content, let selection, selection.bounds != nil else { return }
+        movement = try PixelMove(document: content, selection: selection)
+    }
+    func continueMove(dx: Int, dy: Int) throws {
+        guard let movement, let content else { return }
+        do {
+            try movement.validate(content)
+            try movement.update(dx: dx, dy: dy)
+            refreshSelectionViews()
+        } catch {
+            cancelMove()
+            throw error
+        }
+    }
+    func commitMove() throws {
+        guard let movement, var next = content else { return }
+        defer { cancelMove() }
+        let movedSelection = movement.movedSelection
+        if let raster = try movement.finish(in: next) {
+            try next.replaceRaster(raster, for: next.activeLayerID)
+            try restore(next, actionName: "Move Selected Pixels")
+        }
+        selection = movedSelection
+        refreshSelectionViews()
+    }
+    func cancelMove() {
+        guard movement != nil else { return }
+        movement = nil
+        refreshSelectionViews()
+    }
+
+    func copyPixels(to pasteboard: NSPasteboard) throws -> Bool {
+        cancelTransientEdits()
+        guard let content, let raster = try RegionEditing.copy(content.activeLayer.raster, selection: selection) else {
+            return false
+        }
+        return try RasterClipboard.write(raster, to: pasteboard)
+    }
+    func cutPixels(to pasteboard: NSPasteboard) throws {
+        if try copyPixels(to: pasteboard) { try deletePixels(actionName: "Cut") }
+    }
+    func deletePixels(actionName: String = "Delete Selected Pixels") throws {
+        cancelTransientEdits()
+        guard var next = content,
+            let raster = try RegionEditing.delete(next.activeLayer.raster, selection: selection)
+        else { return }
+        try next.replaceRaster(raster, for: next.activeLayerID)
+        try restore(next, actionName: actionName)
+    }
+    func pastePixels(from pasteboard: NSPasteboard) throws {
+        cancelTransientEdits()
+        guard let content, let raster = try RasterClipboard.read(from: pasteboard) else { return }
+        let next = try RegionEditing.paste(raster, into: content)
+        try restore(next, actionName: "Paste")
+        setSelection(.rectangle(CGRect(origin: .zero, size: raster.size.cgSize), size: next.size))
+    }
+    func cropToSelection() throws {
+        cancelTransientEdits()
+        guard let content, let selection, let next = try RegionEditing.crop(content, selection: selection) else {
+            return
+        }
+        try restore(next, actionName: "Crop to Selection")
+    }
+
     private func refreshStrokeViews() {
         for case let controller as EditorWindowController in windowControllers {
             controller.state.canvas?.needsDisplay = true
@@ -134,7 +227,7 @@ final class ChromaDocument: NSDocument {
     }
 
     override func close() {
-        cancelStroke()
+        cancelTransientEdits()
         super.close()
     }
 
@@ -143,11 +236,12 @@ final class ChromaDocument: NSDocument {
         for case let controller as EditorWindowController in windowControllers {
             controller.presentation.update(content: snapshot.content, raster: snapshot.raster)
             controller.state.canvas?.update(snapshot.raster)
+            controller.state.canvas?.selectionChanged()
         }
     }
 
     override func save(_ sender: Any?) {
-        cancelStroke()
+        cancelTransientEdits()
         if fileType == NativeDocumentCodec.type.identifier, fileURL != nil {
             super.save(sender)
         } else {
@@ -156,7 +250,7 @@ final class ChromaDocument: NSDocument {
     }
 
     override func prepareSavePanel(_ savePanel: NSSavePanel) -> Bool {
-        cancelStroke()
+        cancelTransientEdits()
         savePanel.allowedContentTypes = [NativeDocumentCodec.type]
         savePanel.title = "Save Chroma Document"
         savePanel.message = "Preserve all layers and transparency in an editable Chroma document."

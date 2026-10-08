@@ -28,7 +28,9 @@ public enum LayerCompositor {
         return try RasterSurface(size: document.size, premultipliedRGBA: result)
     }
     /// Integer, clipped document region. Used for transient painting previews.
-    static func compositeRegion(_ document: ImageDocument, rect: CGRect, replacing id: UUID, bytes: Data) throws
+    static func compositeRegion(
+        _ document: ImageDocument, rect: CGRect, replacing id: UUID, bytes: Data, replacementRect: CGRect? = nil
+    ) throws
         -> RasterSurface
     {
         let width = Int(rect.width)
@@ -44,14 +46,22 @@ public enum LayerCompositor {
                         for x in 0..<width {
                             let src = ((Int(rect.minY) + y) * document.size.width + Int(rect.minX) + x) * 4
                             let dst = (y * width + x) * 4
-                            let remaining = 1 - Double(input[src + 3]) / 255 * layer.opacity
+                            let sourceOffset: Int
+                            if layer.id == id, let replacementRect {
+                                sourceOffset =
+                                    ((Int(rect.minY) + y - Int(replacementRect.minY)) * Int(replacementRect.width)
+                                        + Int(rect.minX) + x - Int(replacementRect.minX)) * 4
+                            } else {
+                                sourceOffset = src
+                            }
+                            let remaining = 1 - Double(input[sourceOffset + 3]) / 255 * layer.opacity
                             for channel in 0..<4 {
                                 output[dst + channel] = UInt8(
                                     min(
                                         255,
                                         max(
                                             0,
-                                            (Double(input[src + channel]) * layer.opacity
+                                            (Double(input[sourceOffset + channel]) * layer.opacity
                                                 + Double(output[dst + channel]) * remaining).rounded())))
                             }
                         }
