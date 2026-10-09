@@ -60,7 +60,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item("Cut", #selector(NSText.cut(_:)), key: "x", in: edit)
         item("Copy", #selector(NSText.copy(_:)), key: "c", in: edit)
         item("Paste", #selector(NSText.paste(_:)), key: "v", in: edit)
-        item("Select All", #selector(NSText.selectAll(_:)), key: "a", in: edit)
+        item("Delete Selected Pixels", #selector(CanvasNSView.deleteSelectedPixels(_:)), in: edit)
+
+        let selection = submenu("Selection", in: main)
+        item("Select All", #selector(NSText.selectAll(_:)), key: "a", in: selection)
+        item("Deselect", #selector(CanvasNSView.deselect(_:)), key: "d", in: selection)
+        item(
+            "Invert Selection", #selector(CanvasNSView.invertSelection(_:)), key: "i", modifiers: [.command, .shift],
+            in: selection)
+        selection.addItem(.separator())
+        item("Crop to Selection", #selector(CanvasNSView.cropToSelection(_:)), in: selection)
 
         let layer = submenu("Layer", in: main)
         item("Add Layer", #selector(EditorWindowController.addLayer(_:)), in: layer)

@@ -6,6 +6,11 @@ public enum PaintTool: String, CaseIterable, Sendable {
     case brush = "Brush"
     case eraser = "Eraser"
     case eyedropper = "Eyedropper"
+    case rectangleSelect = "Rectangle Select"
+    case ellipseSelect = "Ellipse Select"
+    case moveSelected = "Move Selected Pixels"
+
+    public var paints: Bool { self == .pencil || self == .brush || self == .eraser }
 }
 
 /// Straight-alpha, encoded sRGB editor color. Raster bytes are premultiplied separately.
@@ -86,6 +91,7 @@ public final class PixelStroke {
     public let settings: StrokeSettings
     private let revision: UUID
     private let source: ImageDocument
+    private let selection: SelectionMask?
     private let original: Data
     private var working: Data
     private var coverage: [UInt8]
@@ -98,8 +104,10 @@ public final class PixelStroke {
     public private(set) var previews: [Int: StrokePreview] = [:]
     private var columns: Int { (source.size.width + patchSize - 1) / patchSize }
 
-    public init(document: ImageDocument, settings: StrokeSettings) throws {
-        guard settings.tool != .eyedropper else { throw PaintingError.samplingTool }
+    public init(document: ImageDocument, settings: StrokeSettings, selection: SelectionMask? = nil) throws {
+        guard selection == nil || selection?.size == document.size else { throw LayerError.invalidRaster }
+        self.selection = selection
+        guard settings.tool.paints else { throw PaintingError.samplingTool }
         guard document.activeLayer.isVisible, document.activeLayer.opacity > 0 else {
             throw PaintingError.unavailableLayer
         }
@@ -199,6 +207,7 @@ public final class PixelStroke {
                 let before = originalRaw.bindMemory(to: UInt8.self)
                 for y in minY..<maxY {
                     for x in minX..<maxX {
+                        guard selection?.contains(x: x, y: y) ?? true else { continue }
                         let amount: UInt8
                         if pencil {
                             amount =
@@ -227,7 +236,7 @@ public final class PixelStroke {
                                         255,
                                         (Double(color[channel]) * strength
                                             + Double(before[offset + channel]) * remaining).rounded()))
-                            case .eyedropper: return
+                            case .eyedropper, .rectangleSelect, .ellipseSelect, .moveSelected: return
                             }
                             changed = changed || pixels[offset + channel] != value
                             pixels[offset + channel] = value

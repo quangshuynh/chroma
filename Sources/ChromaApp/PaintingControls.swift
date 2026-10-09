@@ -19,10 +19,24 @@ extension EditorColor {
 struct PaintingControls: View {
     @ObservedObject var state: EditorState
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                toolPicker
+                paintControls
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                toolPicker
+                paintControls
+            }
+        }.controlSize(.small).padding(.horizontal, 16).padding(.vertical, 8)
+    }
+    private var toolPicker: some View {
+        Picker("Tool", selection: $state.tool) {
+            ForEach(PaintTool.allCases, id: \.self) { tool in Text(tool.rawValue).tag(tool) }
+        }.frame(width: 210).accessibilityLabel("Editing tool")
+    }
+    private var paintControls: some View {
         HStack(spacing: 12) {
-            Picker("Tool", selection: $state.tool) {
-                ForEach(PaintTool.allCases, id: \.self) { tool in Text(tool.rawValue).tag(tool) }
-            }.frame(width: 150).accessibilityLabel("Painting tool")
             Stepper(value: $state.diameter, in: StrokeSettings.diameterRange) {
                 HStack(spacing: 4) {
                     Text("Size")
@@ -38,7 +52,7 @@ struct PaintingControls: View {
                     .accessibilityLabel("Brush size in pixels")
                     Text("px")
                 }
-            }.fixedSize().disabled(state.tool == .eyedropper)
+            }.fixedSize().disabled(!state.tool.paints)
                 .accessibilityLabel("Brush diameter").accessibilityValue("\(state.diameter) pixels")
                 .help("Diameter in document pixels, from 1 to 512")
             ColorPicker("Foreground", selection: colorBinding(foreground: true), supportsOpacity: true)
@@ -54,7 +68,7 @@ struct PaintingControls: View {
             }
             .accessibilityLabel("Swap foreground and background colors").help("Swap colors")
             Spacer(minLength: 0)
-        }.controlSize(.small).padding(.horizontal, 16).frame(height: 38)
+        }
     }
     private func colorBinding(foreground: Bool) -> Binding<Color> {
         Binding(

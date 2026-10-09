@@ -1,6 +1,6 @@
 # Chroma
 
-Chroma is an early-development native macOS raster image editor, inspired by the approachable workflow of paint.net. It is built with Swift, SwiftUI, AppKit, Core Graphics, and ImageIO. It supports layered documents, pixel painting, compositing, native saves, and stroke-level undo.
+Chroma is an early-development native macOS raster image editor, inspired by the approachable workflow of paint.net. It is built with Swift, SwiftUI, AppKit, Core Graphics, and ImageIO. It supports layered documents, pixel painting, compositing, native saves, selections, region editing, and gesture-level undo.
 
 ## What works
 
@@ -12,13 +12,15 @@ Chroma is an early-development native macOS raster image editor, inspired by the
 - Inspect dimensions, working color space, and depth. The native window title shows the filename and unsaved-change indicator.
 - Paint the selected visible layer with Pencil or Brush, erase to transparency, and sample the visible composite with Eyedropper.
 - Choose foreground/background colors with native color wells, swap them, and set a 1–512 px diameter. Pencil uses hard square marks; Brush and Eraser use round edges.
+- Select rectangles or ellipses, select all, deselect, or invert a binary pixel selection. Paint and erase only selected pixels.
+- Move selected pixels with a cancellable preview; cut, copy, paste into a new layer, delete to transparency, or crop every layer to selection bounds.
 - Undo or redo a whole stroke in one step. Escape cancels an unfinished stroke without changing document pixels.
 - Add, duplicate, rename, delete, reorder, show/hide, and adjust the opacity of raster layers in the native Layers inspector.
 - Undo/redo document edits, merge the bottom two layers, or flatten the stack while preserving transparency.
 - Save editable `.chroma` packages; export a composited PNG with alpha or JPEG with an explicit white matte.
 - Use multiple document windows, native close/quit prompts, and the system light or dark appearance.
 
-**Save preserves layers in a native `.chroma` document.** Imported images start clean and must choose a Chroma destination when saved. Existing native documents save to their current destination; Save As creates a copy. PNG/JPEG export leaves the document, its destination, and its unsaved state unchanged. New images start unsaved. Navigation, active-layer selection, hovering, tool/size/color changes, and Eyedropper sampling never mark content modified. Hidden and zero-opacity layers must be made visible before painting.
+**Save preserves layers in a native `.chroma` document.** Imported images start clean and must choose a Chroma destination when saved. Existing native documents save to their current destination; Save As creates a copy. PNG/JPEG export leaves the document, its destination, and its unsaved state unchanged. New images start unsaved. Navigation, active-layer selection, hovering, tool/size/color changes, and Eyedropper sampling never mark content modified. Hidden and zero-opacity layers must be made visible before painting or moving pixels.
 
 The inspector lists the topmost layer first. Move Up/Down controls provide explicit, accessible reordering. The final layer cannot be deleted. Rename with Return or by leaving the name field; opacity drags apply on release as one undo step. Merge Down is currently available only for the bottom two layers, where the 8-bit compositor can preserve exact pixels. Flatten Image handles the complete stack and retains alpha. Both operations are undoable.
 
@@ -57,12 +59,18 @@ Use `swift package clean` before validation for a clean build. CI runs validatio
 | Save Chroma document | ⌘S |
 | Save As | ⇧⌘S |
 | Undo / Redo | ⌘Z / ⇧⌘Z |
+| Select All / Deselect | ⌘A / ⌘D |
+| Invert Selection | ⇧⌘I |
+| Cut / Copy / Paste | ⌘X / ⌘C / ⌘V |
+| Delete selected pixels | Delete / Forward Delete |
 | Export JPEG | ⇧⌘E |
 | Zoom in / out | ⌘= / ⌘− |
 | Actual size | ⌘0 |
 | Fit image | ⇧⌘0 |
 | Toggle inspector | ⌥⌘I |
 | Close window | ⌘W |
+
+Selection and clipboard commands operate on the focused canvas; text fields retain native editing shortcuts. No selection means the whole active layer for painting, copying, cutting, and deletion. Paste inserts a new layer at the canvas origin. Crop uses the selection bounding rectangle across all layers. Selection changes stay clean and outside image undo history. See [selection semantics, lifecycle, and performance](docs/selections.md).
 
 ## Formats and limits
 
@@ -80,7 +88,7 @@ Per-raster limits are 16,384 pixels per side, 32 million pixels total, and 256 M
 
 ## Architecture
 
-- **ChromaCore** contains validated dimensions, immutable raster storage, the document/layer model, mutation APIs, deterministic normal-alpha compositor, native package codec, image codecs, viewport math, and the pixel stroke engine.
+- **ChromaCore** contains validated dimensions, immutable raster storage, the document/layer model, mutation APIs, deterministic normal-alpha compositor, native package codec, image codecs, viewport math, the pixel stroke engine, row-span selection masks, and region operations.
 - **ChromaApp** adapts content to `NSDocument`, native undo, safe saving, dirty state, and windows. SwiftUI provides forms and the Layers inspector; an AppKit canvas draws the cached composite and handles navigation.
 - **Tests** cover layer invariants, exact compositing, native round trips and malformed packages, all ordinary image formats, export, viewport neutrality, native undo/redo, painting/alpha/interpolation, cancellation, and saved-state traversal.
 
@@ -90,6 +98,6 @@ Content owns pixels, the document boundary controls mutations and render invalid
 
 ## Not implemented yet
 
-Selections, fill, gradients, blend modes, masks, transforms, full History, text, shapes, effects, adjustments, PSD, RAW development, plugins, AI, cloud accounts, and collaboration are outside this version. The compact tool strip exposes only implemented tools.
+Lasso, Magic Wand, feathering, fill, gradients, blend modes, masks, transforms beyond translation, full History, text, shapes, effects, adjustments, PSD, RAW development, plugins, AI, cloud accounts, and collaboration are outside this version. The compact tool strip exposes only implemented tools.
 
 Licensed under the [MIT License](LICENSE).
