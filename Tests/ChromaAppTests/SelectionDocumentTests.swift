@@ -229,8 +229,17 @@ struct SelectionDocumentTests {
         canvas.zoom(to: zoom)
         let center = CGPoint(x: canvas.bounds.midX, y: canvas.bounds.midY)
         let scale = zoom / window.backingScaleFactor
-        let start = CGPoint(x: center.x - 2 * scale, y: center.y + 2 * scale)
-        let end = CGPoint(x: center.x + 2 * scale, y: center.y - 2 * scale)
+        // The image origin aligns to backing pixels; geometric canvas center is not
+        // necessarily document center on a different display or a fractional-sized view.
+        // Put endpoints inside known pixels, avoiding floating-point edge ambiguity.
+        let centerPixel = canvas.documentPoint(center)
+        func canvasPoint(x: Double, y: Double) -> CGPoint {
+            CGPoint(x: center.x + (x - centerPixel.x) * scale, y: center.y - (y - centerPixel.y) * scale)
+        }
+        let start = canvasPoint(x: 2.25, y: 2.25)
+        let end = canvasPoint(x: 6.25, y: 6.25)
+        #expect(abs(canvas.documentPoint(start).x - 2.25) < 0.0001)
+        #expect(abs(canvas.documentPoint(start).y - 2.25) < 0.0001)
         func event(_ type: NSEvent.EventType, _ point: CGPoint) throws -> NSEvent {
             try #require(
                 NSEvent.mouseEvent(
@@ -245,7 +254,7 @@ struct SelectionDocumentTests {
         #expect(mask.bounds == CGRect(x: 2, y: 2, width: 4, height: 4))
         #expect(!doc.isDocumentEdited && doc.undoManager?.canUndo == false)
         controller.state.tool = .moveSelected
-        canvas.mouseDown(with: try event(.leftMouseDown, center))
+        canvas.mouseDown(with: try event(.leftMouseDown, canvasPoint(x: 4, y: 4)))
         canvas.mouseDragged(with: try event(.leftMouseDragged, end))
         #expect(doc.movement != nil && !doc.isDocumentEdited)
         let escape = try #require(

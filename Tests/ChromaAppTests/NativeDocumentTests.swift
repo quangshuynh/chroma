@@ -68,6 +68,7 @@ struct NativeDocumentTests {
         let window = try #require(controller.window)
         #expect(window.minSize == NSSize(width: 640, height: 520))
         window.contentView?.layoutSubtreeIfNeeded()
+        #expect(window.minSize == NSSize(width: 640, height: 520))
         let canvas = try #require(controller.state.canvas)
         controller.actualSize(nil)
         #expect(canvas.zoomFactor == 1)
